@@ -21,8 +21,13 @@ const app = express();
 // Security headers
 app.use(helmet({ crossOriginResourcePolicy: false }));
 
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://priyank-skillforgeai.vercel.app",
+];
+
 app.use(cors({
-  origin: process.env.CLIENT_URL || "http://localhost:5173",
+  origin: allowedOrigins,
   credentials: true,
 }));
 
