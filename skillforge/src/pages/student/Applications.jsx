@@ -1,152 +1,155 @@
-import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { ClipboardList, Building2, Trash2, MapPin, Calendar } from 'lucide-react';
-import { applicationApi } from '../../api/applicationApi';
-import { useAuthStore } from '../../store/authStore';
-import { SearchBar } from '../../components/ui/SearchBar';
-import { EmptyState } from '../../components/ui/EmptyState';
-import { TableSkeleton } from '../../components/ui/Skeleton';
-import { Button } from '../../components/ui/Button';
+import { useState } from 'react';
+import { ClipboardList, Undo2 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { Link } from 'react-router-dom';
+import { useAuthStore } from '../../store/authStore';
+import { useFetch } from '../../hooks/useFetch';
+import { useConfirm } from '../../hooks/useConfirm';
+import { usePagination } from '../../hooks/usePagination';
+import { applicationApi } from '../../api/applicationApi';
+import { PageHeader } from '../../components/ui/PageHeader';
+import { Button } from '../../components/ui/Button';
+import { StatusBadge } from '../../components/ui/Badge';
+import { SearchBar } from '../../components/ui/SearchBar';
+import { Tabs } from '../../components/ui/Tabs';
+import { Pagination } from '../../components/ui/Pagination';
+import { EmptyState } from '../../components/ui/EmptyState';
+import { ErrorState } from '../../components/ui/ErrorState';
+import { TableSkeleton } from '../../components/ui/Skeleton';
+import { Table, TableCard, Td, Th, Tr } from '../../components/ui/Table';
+import { buttonStyles } from '../../components/ui/buttonStyles';
+import { errorMessage, formatDate, matchesQuery } from '../../utils/format';
+import { isOwnApplication } from '../../utils/ownership';
+import { APPLICATION_STATUSES } from '../../utils/ui';
 
-// Backend status: "Applied" | "Shortlisted" | "Rejected" | "Selected"
-const StatusBadge = ({ status }) => {
-  const map = {
-    Applied: 'badge-info',
-    Shortlisted: 'badge-success',
-    Rejected: 'badge-danger',
-    Selected: 'badge-cyan',
-  };
-  return <span className={`badge ${map[status] || 'badge-info'}`}>{status}</span>;
-};
+const PAGE_SIZE = 10;
 
 export const StudentApplications = () => {
-  const { user } = useAuthStore();
-  const [apps, setApps] = useState([]);
-  const [allApps, setAllApps] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const user = useAuthStore((s) => s.user);
+  const { data: applications, loading, error, reload } = useFetch(() =>
+    applicationApi.getApplications().then((res) => (res.data.applications ?? []).filter((a) => isOwnApplication(a, user)))
+  );
+  const { confirm, dialog } = useConfirm();
   const [search, setSearch] = useState('');
+  const [status, setStatus] = useState('all');
 
-  const load = async () => {
-    setLoading(true);
+  const all = applications ?? [];
+  const filtered = all
+    .filter((a) => (status === 'all' || a.status === status) && matchesQuery(search, a.job?.title, a.job?.company))
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const pager = usePagination(filtered, PAGE_SIZE, `${status}|${search}`);
+
+  const tabs = [
+    { id: 'all', label: 'All', count: all.length },
+    ...APPLICATION_STATUSES.map((s) => ({ id: s, label: s, count: all.filter((a) => a.status === s).length })),
+  ];
+
+  const withdraw = async (app) => {
+    const ok = await confirm({
+      title: 'Withdraw this application?',
+      description: `Your application for ${app.job?.title || 'this job'} will be removed. You can apply again later.`,
+      confirmLabel: 'Withdraw',
+    });
+    if (!ok) return;
     try {
-      const { data } = await applicationApi.getApplications();
-      const list = data.applications || [];
-      // Backend returns ALL applications - filter to current student only
-      // student field is populated with { _id, fullName, email }
-      const mine = list.filter(a =>
-        a.student?._id === user?._id ||
-        a.student?.email === user?.email
-      );
-      setAllApps(mine);
-      setApps(mine);
-    } catch { toast.error('Failed to load applications'); }
-    setLoading(false);
-  };
-  useEffect(() => { load(); }, []);
-
-  useEffect(() => {
-    if (!search) { setApps(allApps); return; }
-    setApps(allApps.filter(a =>
-      a.job?.title?.toLowerCase().includes(search.toLowerCase()) ||
-      a.job?.company?.toLowerCase().includes(search.toLowerCase())
-    ));
-  }, [search, allApps]);
-
-  const withdraw = async (id) => {
-    if (!confirm('Withdraw this application?')) return;
-    try {
-      await applicationApi.withdrawApplication(id);
+      await applicationApi.withdrawApplication(app._id);
       toast.success('Application withdrawn');
-      load();
-    } catch { toast.error('Failed to withdraw'); }
+      reload();
+    } catch (err) {
+      toast.error(errorMessage(err, 'Could not withdraw the application'));
+    }
   };
 
-  const counts = {
-    total: apps.length,
-    applied: apps.filter(a => a.status === 'Applied').length,
-    shortlisted: apps.filter(a => a.status === 'Shortlisted').length,
-    rejected: apps.filter(a => a.status === 'Rejected').length,
-  };
+  let body;
+  if (loading) {
+    body = <TableSkeleton />;
+  } else if (error) {
+    body = <ErrorState title="Couldn't load your applications" onRetry={reload} />;
+  } else if (all.length === 0) {
+    body = (
+      <EmptyState
+        icon={ClipboardList}
+        title="No applications yet"
+        description="Apply to a job and you'll be able to follow its progress here."
+        action={<Link to="/student/jobs" className={buttonStyles({ size: 'sm' })}>Browse jobs</Link>}
+      />
+    );
+  } else {
+    body = (
+      <>
+        <Tabs tabs={tabs} value={status} onChange={setStatus} label="Filter by status" className="mb-4" />
+        <SearchBar value={search} onChange={setSearch} placeholder="Search by job or company…" className="mb-4 sm:max-w-sm" />
+        {filtered.length === 0 ? (
+          <EmptyState icon={ClipboardList} title="No matching applications" description="Try a different status or search term." />
+        ) : (
+          <>
+            <TableCard className="hidden md:block">
+              <Table minWidth={620}>
+                <thead>
+                  <tr>
+                    <Th>Job</Th>
+                    <Th>Location</Th>
+                    <Th>Applied</Th>
+                    <Th>Status</Th>
+                    <Th><span className="sr-only">Actions</span></Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pager.pageItems.map((app) => (
+                    <Tr key={app._id}>
+                      <Td>
+                        <p className="font-medium text-fg">{app.job?.title || 'Job removed'}</p>
+                        <p className="text-fg-muted">{app.job?.company || '—'}</p>
+                      </Td>
+                      <Td>{app.job?.location || '—'}</Td>
+                      <Td className="whitespace-nowrap">{formatDate(app.createdAt)}</Td>
+                      <Td><StatusBadge status={app.status} /></Td>
+                      <Td className="text-right">
+                        {app.status === 'Applied' && (
+                          <Button variant="danger-ghost" size="sm" onClick={() => withdraw(app)}>
+                            <Undo2 size={14} aria-hidden="true" /> Withdraw
+                          </Button>
+                        )}
+                      </Td>
+                    </Tr>
+                  ))}
+                </tbody>
+              </Table>
+            </TableCard>
+
+            <ul className="space-y-3 md:hidden">
+              {pager.pageItems.map((app) => (
+                <li key={app._id} className="rounded-xl border border-line bg-surface p-4 shadow-card">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-medium text-fg">{app.job?.title || 'Job removed'}</p>
+                      <p className="text-sm text-fg-muted">{app.job?.company || '—'}{app.job?.location ? ` · ${app.job.location}` : ''}</p>
+                    </div>
+                    <StatusBadge status={app.status} />
+                  </div>
+                  <p className="mt-2 text-xs text-fg-subtle">Applied {formatDate(app.createdAt)}</p>
+                  {app.status === 'Applied' && (
+                    <div className="mt-3 border-t border-line pt-3">
+                      <Button variant="danger-ghost" size="sm" onClick={() => withdraw(app)}>
+                        <Undo2 size={14} aria-hidden="true" /> Withdraw
+                      </Button>
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+            <Pagination page={pager.page} totalPages={pager.totalPages} onPageChange={pager.setPage} total={pager.total} pageSize={pager.pageSize} />
+          </>
+        )}
+      </>
+    );
+  }
 
   return (
-    <div className="space-y-6">
-      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
-        <h1 className="text-2xl font-bold text-white">My Applications</h1>
-        <p className="text-white/40 text-sm mt-1">Track your job applications</p>
-      </motion.div>
-
-      <div className="grid grid-cols-4 gap-3">
-        {[
-          ['Total', counts.total, 'text-white'],
-          ['Applied', counts.applied, 'text-indigo-400'],
-          ['Shortlisted', counts.shortlisted, 'text-green-400'],
-          ['Rejected', counts.rejected, 'text-red-400'],
-        ].map(([label, val, color]) => (
-          <div key={label} className="glass rounded-xl p-4 border border-white/6 text-center">
-            <div className={`text-2xl font-bold ${color}`}>{val}</div>
-            <div className="text-xs text-white/40 mt-1">{label}</div>
-          </div>
-        ))}
-      </div>
-
-      <SearchBar value={search} onChange={setSearch} placeholder="Search company or role..." />
-
-      {loading ? <TableSkeleton /> : apps.length === 0 ? (
-        <EmptyState icon={ClipboardList} title="No applications yet"
-          description="Browse jobs and apply — they'll appear here." />
-      ) : (
-        <div className="glass rounded-2xl border border-white/6 overflow-hidden">
-          <table className="premium-table">
-            <thead>
-              <tr>
-                <th>Company & Role</th>
-                <th>Location</th>
-                <th>Applied On</th>
-                <th>Status</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {apps.map((app, i) => (
-                <motion.tr key={app._id} initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-                  transition={{ delay: i * 0.04 }}>
-                  <td>
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center shrink-0">
-                        <Building2 size={14} className="text-indigo-400" />
-                      </div>
-                      <div>
-                        <div className="font-medium text-white text-sm">{app.job?.title || '—'}</div>
-                        <div className="text-xs text-white/40">{app.job?.company || '—'}</div>
-                      </div>
-                    </div>
-                  </td>
-                  <td>
-                    <span className="flex items-center gap-1 text-sm text-white/50">
-                      <MapPin size={12} />{app.job?.location || '—'}
-                    </span>
-                  </td>
-                  <td>
-                    <span className="flex items-center gap-1 text-sm text-white/50">
-                      <Calendar size={12} />
-                      {app.createdAt ? new Date(app.createdAt).toLocaleDateString() : '—'}
-                    </span>
-                  </td>
-                  <td><StatusBadge status={app.status} /></td>
-                  <td>
-                    {app.status === 'Applied' && (
-                      <Button onClick={() => withdraw(app._id)} variant="danger" size="sm">
-                        <Trash2 size={12} /> Withdraw
-                      </Button>
-                    )}
-                  </td>
-                </motion.tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
+    <>
+      <PageHeader title="Applications" description="Track the status of every job you've applied to." />
+      {body}
+      {dialog}
+    </>
   );
 };

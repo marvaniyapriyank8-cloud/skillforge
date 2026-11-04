@@ -1,9 +1,11 @@
 import { Navigate, Outlet } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
+import { ROLE_HOME } from '../utils/ui';
 
+/** Auth pages: signed-in users are sent straight to their dashboard. */
 export const PublicRoute = () => {
-  const { isAuthenticated, user } = useAuthStore();
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const user = useAuthStore((s) => s.user);
   if (!isAuthenticated || !user) return <Outlet />;
-  const routes = { student: '/student/dashboard', recruiter: '/recruiter/dashboard', mentor: '/mentor/dashboard', admin: '/admin/dashboard' };
-  return <Navigate to={routes[user.role] || '/'} replace />;
+  return <Navigate to={ROLE_HOME[user.role] || '/'} replace />;
 };

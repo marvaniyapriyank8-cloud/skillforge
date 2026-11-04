@@ -1,28 +1,49 @@
-export const Badge = ({ children, variant = 'info', size = 'sm' }) => {
-  const variants = {
-    success: 'badge-success',
-    warning: 'badge-warning',
-    danger: 'badge-danger',
-    info: 'badge-info',
-    cyan: 'badge-cyan',
-    gray: 'bg-white/5 text-white/50 border border-white/10',
-  };
-  return <span className={`badge ${variants[variant]}`}>{children}</span>;
+import { cn } from '../../utils/cn';
+
+const variants = {
+  neutral: 'bg-subtle text-fg-muted',
+  brand: 'bg-brand-soft text-brand-fg',
+  success: 'bg-success-soft text-success-fg',
+  warning: 'bg-warning-soft text-warning-fg',
+  danger: 'bg-danger-soft text-danger-fg',
+  info: 'bg-info-soft text-info-fg',
 };
 
-export const StatusBadge = ({ status }) => {
-  const map = {
-    pending: { v: 'warning', label: 'Pending' },
-    shortlisted: { v: 'success', label: 'Shortlisted' },
-    rejected: { v: 'danger', label: 'Rejected' },
-    applied: { v: 'info', label: 'Applied' },
-    active: { v: 'success', label: 'Active' },
-    blocked: { v: 'danger', label: 'Blocked' },
-    student: { v: 'cyan', label: 'Student' },
-    recruiter: { v: 'info', label: 'Recruiter' },
-    mentor: { v: 'success', label: 'Mentor' },
-    admin: { v: 'danger', label: 'Admin' },
-  };
-  const s = map[status?.toLowerCase()] || { v: 'gray', label: status };
-  return <Badge variant={s.v}>{s.label}</Badge>;
+export const Badge = ({ children, variant = 'neutral', className }) => (
+  <span
+    className={cn(
+      'inline-flex items-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium',
+      variants[variant],
+      className
+    )}
+  >
+    {children}
+  </span>
+);
+
+const STATUS_VARIANT = {
+  applied: 'info',
+  shortlisted: 'warning',
+  selected: 'success',
+  rejected: 'danger',
+  active: 'success',
+  blocked: 'danger',
+  student: 'info',
+  recruiter: 'brand',
+  mentor: 'success',
+  admin: 'danger',
+  general: 'neutral',
+  resume: 'info',
+  project: 'brand',
+};
+
+/** Color-coded badge for application status, user role/state and feedback type. */
+export const StatusBadge = ({ status, className }) => {
+  if (!status) return null;
+  const key = String(status).toLowerCase();
+  return (
+    <Badge variant={STATUS_VARIANT[key] || 'neutral'} className={cn('capitalize', className)}>
+      {status}
+    </Badge>
+  );
 };

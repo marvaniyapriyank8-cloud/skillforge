@@ -59,7 +59,11 @@ export const useAuthStore = create(
       },
 
       logout: async () => {
-        try { await authApi.logout(); } catch {}
+        try {
+          await authApi.logout();
+        } catch {
+          // Ignore: we clear the local session regardless of the server response.
+        }
         localStorage.removeItem('sf_token');
         set({ user: null, token: null, isAuthenticated: false });
         toast.success('Logged out successfully');

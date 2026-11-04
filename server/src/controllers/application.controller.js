@@ -1,40 +1,114 @@
+import mongoose from "mongoose";
 import Application from "../models/application.model.js";
-import User from "../models/user.model.js";
+import Job from "../models/job.model.js";
 import { sendEmail } from "../services/mail.service.js";
 
+// CREATE APPLICATION
 export const createApplication = async (req, res) => {
+  const session = await mongoose.startSession();
+
   try {
     const { jobId } = req.body;
 
     if (!jobId) {
-      return res.status(400).json({ success: false, message: "jobId is required" });
+      return res.status(400).json({
+        success: false,
+        message: "jobId is required"
+      });
     }
 
-    // FIX: Prevent duplicate applications
-    const existing = await Application.findOne({ student: req.user._id, job: jobId });
-    if (existing) {
-      return res.status(400).json({ success: false, message: "You have already applied to this job" });
-    }
+    let application;
 
-    const application = await Application.create({ student: req.user._id, job: jobId });
+    await session.withTransaction(async () => {
+      const job = await Job.findById(jobId).session(session);
 
-    // Send email non-blocking
-    sendEmail(req.user.email, "Application Submitted", "Your job application has been submitted successfully.").catch(() => {});
+      if (!job) {
+        const error = new Error("Job not found");
+        error.statusCode = 404;
+        throw error;
+      }
 
-    res.status(201).json({ success: true, application });
+      const existing = await Application.findOne({
+        student: req.user._id,
+        job: jobId
+      }).session(session);
+
+      if (existing) {
+        const error = new Error("You have already applied to this job");
+        error.statusCode = 409;
+        throw error;
+      }
+
+      const [createdApplication] = await Application.create(
+        [{
+          student: req.user._id,
+          job: job._id
+        }],
+        { session }
+      );
+
+      await Job.updateOne(
+        { _id: job._id },
+        { $addToSet: { applicants: req.user._id } },
+        { session }
+      );
+
+      application = createdApplication;
+    });
+
+    sendEmail(
+      req.user.email,
+      "Application Submitted",
+      "Your job application has been submitted successfully."
+    ).catch(() => {});
+
+    return res.status(201).json({
+      success: true,
+      message: "Application submitted successfully",
+      application
+    });
 
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    console.error("Create application error:", error.message);
+
+    const statusCode =
+      error.statusCode ||
+      (error.code === 11000 ? 409 :
+      error.name === "CastError" ? 400 : 500);
+
+    return res.status(statusCode).json({
+      success: false,
+      message: error.code === 11000
+        ? "You have already applied to this job"
+        : error.message
+    });
+
+  } finally {
+    await session.endSession();
   }
 };
 
+
+// GET APPLICATIONS
 export const getApplications = async (req, res) => {
   try {
     let query = {};
 
-    // FIX: Students see only their own applications; recruiters/admins see all
     if (req.user.role === "student") {
       query = { student: req.user._id };
+
+    } else if (req.user.role === "recruiter") {
+      const recruiterJobIds = await Job.find({
+        recruiter: req.user._id
+      }).distinct("_id");
+
+      query = { job: { $in: recruiterJobIds } };
+
+    } else if (req.user.role !== "admin") {
+      return res.status(403).json({
+        success: false,
+        message: "You are not authorized to view applications"
+      });
     }
 
     const applications = await Application.find(query)
@@ -42,34 +116,73 @@ export const getApplications = async (req, res) => {
       .populate("job", "title company location")
       .sort({ createdAt: -1 });
 
-    res.status(200).json({ success: true, applications });
+    return res.status(200).json({
+      success: true,
+      applications
+    });
 
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({
+      success: false,
+      message: error.message
+    });
   }
 };
 
+
+// UPDATE APPLICATION STATUS
 export const updateApplicationStatus = async (req, res) => {
   try {
     const { status } = req.body;
 
-    const validStatuses = ["Applied", "Shortlisted", "Rejected", "Selected"];
+    const validStatuses = [
+      "Applied",
+      "Shortlisted",
+      "Rejected",
+      "Selected"
+    ];
+
     if (!validStatuses.includes(status)) {
-      return res.status(400).json({ success: false, message: "Invalid status" });
+      return res.status(400).json({
+        success: false,
+        message: "Invalid status"
+      });
     }
 
-    const application = await Application.findByIdAndUpdate(
-      req.params.id,
-      { status },
-      { new: true }
-    ).populate("student", "fullName email");
+    const application = await Application.findById(req.params.id);
 
     if (!application) {
-      return res.status(404).json({ success: false, message: "Application not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Application not found"
+      });
     }
 
-    // Send email on shortlist non-blocking
-    if (status === "Shortlisted") {
+    const job = await Job.findById(application.job).select("recruiter");
+
+    if (!job) {
+      return res.status(404).json({
+        success: false,
+        message: "Associated job not found"
+      });
+    }
+
+    if (job.recruiter.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not authorized to update this application"
+      });
+    }
+
+    const previousStatus = application.status;
+
+    application.status = status;
+    await application.save();
+
+    await application.populate("student", "fullName email");
+    await application.populate("job", "title company location");
+
+    if (status === "Shortlisted" && previousStatus !== "Shortlisted") {
       sendEmail(
         application.student.email,
         "You are Shortlisted!",
@@ -77,7 +190,7 @@ export const updateApplicationStatus = async (req, res) => {
       ).catch(() => {});
     }
 
-    if (status === "Selected") {
+    if (status === "Selected" && previousStatus !== "Selected") {
       sendEmail(
         application.student.email,
         "You are Selected!",
@@ -85,30 +198,71 @@ export const updateApplicationStatus = async (req, res) => {
       ).catch(() => {});
     }
 
-    res.status(200).json({ success: true, application });
+    return res.status(200).json({
+      success: true,
+      application
+    });
 
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({
+      success: false,
+      message: error.message
+    });
   }
 };
 
+
+// WITHDRAW APPLICATION
 export const deleteApplication = async (req, res) => {
+  const session = await mongoose.startSession();
+
   try {
-    // FIX: Only allow student to delete their own application
-    const application = await Application.findOne({
-      _id: req.params.id,
-      student: req.user._id
+    await session.withTransaction(async () => {
+      const application = await Application.findOne({
+        _id: req.params.id,
+        student: req.user._id
+      }).session(session);
+
+      if (!application) {
+        const error = new Error("Application not found");
+        error.statusCode = 404;
+        throw error;
+      }
+
+      if (application.status !== "Applied") {
+        const error = new Error(
+          "You can only withdraw applications with Applied status"
+        );
+        error.statusCode = 400;
+        throw error;
+      }
+
+      await Application.deleteOne(
+        { _id: application._id },
+        { session }
+      );
+
+      await Job.updateOne(
+        { _id: application.job },
+        { $pull: { applicants: req.user._id } },
+        { session }
+      );
     });
 
-    if (!application) {
-      return res.status(404).json({ success: false, message: "Application not found" });
-    }
-
-    await Application.findByIdAndDelete(req.params.id);
-
-    res.status(200).json({ success: true, message: "Application withdrawn successfully" });
+    return res.status(200).json({
+      success: true,
+      message: "Application withdrawn successfully"
+    });
 
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    console.error("Withdraw application error:", error.message);
+
+    return res.status(error.statusCode || 500).json({
+      success: false,
+      message: error.message
+    });
+
+  } finally {
+    await session.endSession();
   }
 };

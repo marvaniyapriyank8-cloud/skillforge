@@ -1,140 +1,137 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { lazy, Suspense, useEffect, useState } from 'react';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
-import { useEffect, useState } from 'react';
 import { useAuthStore } from './store/authStore';
-
-import { Landing } from './pages/Landing';
-import { Login } from './pages/auth/Login';
-import { Register } from './pages/auth/Register';
-import { NotFound } from './pages/NotFound';
 
 import { ProtectedRoute } from './routes/ProtectedRoute';
 import { PublicRoute } from './routes/PublicRoute';
+import { ScrollToTop } from './routes/ScrollToTop';
 import { DashboardLayout } from './layouts/DashboardLayout';
+import { LogoMark } from './components/ui/Logo';
 
-import { StudentDashboard } from './pages/student/Dashboard';
-import { StudentProfile } from './pages/student/Profile';
-import { StudentSkills } from './pages/student/Skills';
-import { StudentProjects } from './pages/student/Projects';
-import { ResumeCenter } from './pages/student/Resume';
-import { StudentJobs } from './pages/student/Jobs';
-import { StudentApplications } from './pages/student/Applications';
+// Each page is its own chunk, so the first load only downloads what it needs
+// (the charting library, for example, is only fetched by dashboards).
+const page = (loader, name) => lazy(() => loader().then((m) => ({ default: m[name] })));
 
-import { RecruiterDashboard } from './pages/recruiter/Dashboard';
-import { RecruiterJobs } from './pages/recruiter/Jobs';
-import { RecruiterApplicants } from './pages/recruiter/Applicants';
+const Landing = page(() => import('./pages/Landing'), 'Landing');
+const Login = page(() => import('./pages/auth/Login'), 'Login');
+const Register = page(() => import('./pages/auth/Register'), 'Register');
+const NotFound = page(() => import('./pages/NotFound'), 'NotFound');
 
-import { MentorDashboard } from './pages/mentor/Dashboard';
-import { MentorFeedback } from './pages/mentor/Feedback';
+const StudentDashboard = page(() => import('./pages/student/Dashboard'), 'StudentDashboard');
+const StudentProfile = page(() => import('./pages/student/Profile'), 'StudentProfile');
+const StudentSkills = page(() => import('./pages/student/Skills'), 'StudentSkills');
+const StudentProjects = page(() => import('./pages/student/Projects'), 'StudentProjects');
+const ResumeCenter = page(() => import('./pages/student/Resume'), 'ResumeCenter');
+const StudentJobs = page(() => import('./pages/student/Jobs'), 'StudentJobs');
+const StudentApplications = page(() => import('./pages/student/Applications'), 'StudentApplications');
+const StudentFeedback = page(() => import('./pages/student/Feedback'), 'StudentFeedback');
 
-import { AdminDashboard } from './pages/admin/Dashboard';
-import { AdminUsers } from './pages/admin/Users';
-import { AdminJobs } from './pages/admin/Jobs';
+const RecruiterDashboard = page(() => import('./pages/recruiter/Dashboard'), 'RecruiterDashboard');
+const RecruiterJobs = page(() => import('./pages/recruiter/Jobs'), 'RecruiterJobs');
+const RecruiterApplicants = page(() => import('./pages/recruiter/Applicants'), 'RecruiterApplicants');
 
-// Full-screen loader while checking auth on app start
+const MentorDashboard = page(() => import('./pages/mentor/Dashboard'), 'MentorDashboard');
+const MentorFeedback = page(() => import('./pages/mentor/Feedback'), 'MentorFeedback');
+import { MentorStudentProfile } from './pages/mentor/StudentProfile';
+
+const AdminDashboard = page(() => import('./pages/admin/Dashboard'), 'AdminDashboard');
+const AdminUsers = page(() => import('./pages/admin/Users'), 'AdminUsers');
+const AdminJobs = page(() => import('./pages/admin/Jobs'), 'AdminJobs');
+const AdminApplications = page(() => import('./pages/admin/Applications'), 'AdminApplications');
+
+// Full-screen loader while the saved session is verified / a page chunk loads
 const AppLoader = () => (
-  <div className="min-h-screen mesh-bg flex items-center justify-center">
-    <div className="flex flex-col items-center gap-4">
-      <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-500 flex items-center justify-center animate-pulse shadow-xl shadow-indigo-500/30">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-          <path d="M13 2L4.09 12.37a1 1 0 0 0 .77 1.63H12l-1 8 8.91-10.37A1 1 0 0 0 19 10h-7l1-8z" fill="white"/>
-        </svg>
-      </div>
-      <div className="flex gap-1.5">
-        {[0,1,2].map(i => (
-          <div key={i} className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce"
-            style={{ animationDelay: `${i * 0.15}s` }} />
-        ))}
-      </div>
-    </div>
+  <div role="status" aria-label="Loading" className="flex min-h-screen items-center justify-center bg-canvas">
+    <LogoMark size={36} className="animate-pulse" />
   </div>
 );
 
+const toastOptions = {
+  duration: 3500,
+  style: {
+    background: 'var(--surface)',
+    color: 'var(--fg)',
+    border: '1px solid var(--line)',
+    borderRadius: '10px',
+    boxShadow: 'var(--shadow-pop)',
+    fontSize: '14px',
+    fontWeight: 500,
+    padding: '10px 14px',
+  },
+  success: { iconTheme: { primary: 'var(--success-fg)', secondary: 'var(--surface)' } },
+  error: { iconTheme: { primary: 'var(--danger-fg)', secondary: 'var(--surface)' } },
+};
+
 function App() {
-  const { token, fetchMe } = useAuthStore();
   const [initializing, setInitializing] = useState(true);
 
+  // Verify the persisted session once on startup
   useEffect(() => {
-    // Check if token is valid on app mount
-    const init = async () => {
-      if (token) await fetchMe();
-      setInitializing(false);
-    };
-    init();
+    const { token, fetchMe } = useAuthStore.getState();
+    Promise.resolve(token ? fetchMe() : null).then(() => setInitializing(false));
   }, []);
 
   if (initializing) return <AppLoader />;
 
   return (
     <BrowserRouter>
-      <Toaster position="top-right" toastOptions={{
-        duration: 3500,
-        style: {
-          background: 'rgba(10,10,20,0.95)',
-          color: '#e2e8f0',
-          border: '1px solid rgba(255,255,255,0.10)',
-          borderRadius: '14px',
-          backdropFilter: 'blur(24px)',
-          fontSize: '13.5px',
-          fontWeight: '500',
-          padding: '12px 16px',
-        },
-        success: { iconTheme: { primary: '#4ade80', secondary: '#0a0a14' } },
-        error:   { iconTheme: { primary: '#f87171', secondary: '#0a0a14' } },
-      }} />
+      <ScrollToTop />
+      <Toaster position="top-right" toastOptions={toastOptions} />
 
-      <Routes>
-        {/* Public */}
-        <Route path="/" element={<Landing />} />
+      <Suspense fallback={<AppLoader />}>
+        <Routes>
+          <Route path="/" element={<Landing />} />
 
-        {/* Auth routes — redirect to dashboard if already logged in */}
-        <Route element={<PublicRoute />}>
-          <Route path="/login"    element={<Login />} />
-          <Route path="/register" element={<Register />} />
-        </Route>
-
-        {/* Student */}
-        <Route element={<ProtectedRoute allowedRoles={['student']} />}>
-          <Route element={<DashboardLayout />}>
-            <Route path="/student/dashboard"    element={<StudentDashboard />} />
-            <Route path="/student/profile"      element={<StudentProfile />} />
-            <Route path="/student/skills"       element={<StudentSkills />} />
-            <Route path="/student/projects"     element={<StudentProjects />} />
-            <Route path="/student/resume"       element={<ResumeCenter />} />
-            <Route path="/student/jobs"         element={<StudentJobs />} />
-            <Route path="/student/applications" element={<StudentApplications />} />
+          {/* Signed-in users are redirected to their dashboard */}
+          <Route element={<PublicRoute />}>
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
           </Route>
-        </Route>
 
-        {/* Recruiter */}
-        <Route element={<ProtectedRoute allowedRoles={['recruiter']} />}>
-          <Route element={<DashboardLayout />}>
-            <Route path="/recruiter/dashboard"  element={<RecruiterDashboard />} />
-            <Route path="/recruiter/jobs"       element={<RecruiterJobs />} />
-            <Route path="/recruiter/applicants" element={<RecruiterApplicants />} />
+          <Route element={<ProtectedRoute allowedRoles={['student']} />}>
+            <Route element={<DashboardLayout />}>
+              <Route path="/student/dashboard" element={<StudentDashboard />} />
+              <Route path="/student/profile" element={<StudentProfile />} />
+              <Route path="/student/skills" element={<StudentSkills />} />
+              <Route path="/student/projects" element={<StudentProjects />} />
+              <Route path="/student/resume" element={<ResumeCenter />} />
+              <Route path="/student/jobs" element={<StudentJobs />} />
+              <Route path="/student/applications" element={<StudentApplications />} />
+              <Route path="/student/feedback" element={<StudentFeedback />} />
+            </Route>
           </Route>
-        </Route>
 
-        {/* Mentor */}
-        <Route element={<ProtectedRoute allowedRoles={['mentor']} />}>
-          <Route element={<DashboardLayout />}>
-            <Route path="/mentor/dashboard" element={<MentorDashboard />} />
-            <Route path="/mentor/feedback"  element={<MentorFeedback />} />
+          <Route element={<ProtectedRoute allowedRoles={['recruiter']} />}>
+            <Route element={<DashboardLayout />}>
+              <Route path="/recruiter/dashboard" element={<RecruiterDashboard />} />
+              <Route path="/recruiter/jobs" element={<RecruiterJobs />} />
+              <Route path="/recruiter/applicants" element={<RecruiterApplicants />} />
+            </Route>
           </Route>
-        </Route>
 
-        {/* Admin */}
-        <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
-          <Route element={<DashboardLayout />}>
-            <Route path="/admin/dashboard"  element={<AdminDashboard />} />
-            <Route path="/admin/users"      element={<AdminUsers />} />
-            <Route path="/admin/jobs"       element={<AdminJobs />} />
+          <Route element={<ProtectedRoute allowedRoles={['mentor']} />}>
+            <Route element={<DashboardLayout />}>
+              <Route path="/mentor/dashboard" element={<MentorDashboard />} />
+              <Route path="/mentor/feedback" element={<MentorFeedback />} />
+              <Route path="/mentor/students/:id" element={<MentorStudentProfile />} />
+            </Route>
           </Route>
-        </Route>
 
-        {/* 404 */}
-        <Route path="*" element={<NotFound />} />
-      </Routes>
+          <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
+            <Route element={<DashboardLayout />}>
+              <Route path="/admin/dashboard" element={<AdminDashboard />} />
+              <Route path="/admin/users" element={<AdminUsers />} />
+              <Route path="/admin/jobs" element={<AdminJobs />} />
+              <Route path="/admin/applications" element={<AdminApplications />} />
+              {/* Old sidebar link – kept so bookmarks don't hit a 404 */}
+              <Route path="/admin/analytics" element={<Navigate to="/admin/dashboard" replace />} />
+            </Route>
+          </Route>
+
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+      </Suspense>
     </BrowserRouter>
   );
 }

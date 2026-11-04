@@ -11,7 +11,8 @@ const userSchema = new mongoose.Schema(
       enum: ["student", "mentor", "recruiter", "admin"],
       default: "student"
     },
-    isBlocked: { type: Boolean, default: false }
+    isBlocked: { type: Boolean, default: false },
+    assignedMentor: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null, index: true }
   },
   { timestamps: true }
 );

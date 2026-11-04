@@ -1,155 +1,358 @@
+
 import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Pencil, Trash2, MessageSquare } from 'lucide-react';
-import { mentorApi } from '../../api/mentorApi';
-import { Input, Textarea, Select } from '../../components/ui/Input';
-import { Button } from '../../components/ui/Button';
-import { Modal } from '../../components/ui/Modal';
-import { EmptyState } from '../../components/ui/EmptyState';
-import { SearchBar } from '../../components/ui/SearchBar';
-import { CardSkeleton } from '../../components/ui/Skeleton';
+import { MessageSquare, Pencil, Plus, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { useMentorFeedback } from '../../hooks/useMentorFeedback';
+import { useConfirm } from '../../hooks/useConfirm';
+import { usePagination } from '../../hooks/usePagination';
+import { mentorApi } from '../../api/mentorApi';
+import { PageHeader } from '../../components/ui/PageHeader';
+import { Card } from '../../components/ui/Card';
+import { Select, Textarea } from '../../components/ui/Input';
+import { Button, IconButton } from '../../components/ui/Button';
+import { Avatar } from '../../components/ui/Avatar';
+import { StatusBadge } from '../../components/ui/Badge';
+import { Modal } from '../../components/ui/Modal';
+import { SearchBar } from '../../components/ui/SearchBar';
+import { Tabs } from '../../components/ui/Tabs';
+import { Pagination } from '../../components/ui/Pagination';
+import { EmptyState } from '../../components/ui/EmptyState';
+import { ErrorState } from '../../components/ui/ErrorState';
+import { CardSkeleton } from '../../components/ui/Skeleton';
+import { errorMessage, formatDate, matchesQuery } from '../../utils/format';
+import { FEEDBACK_TYPES } from '../../utils/ui';
 
-// Backend feedback model fields: student (ObjectId), type (resume|project|general), message
+const PAGE_SIZE = 8;
+const label = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+
 export const MentorFeedback = () => {
-  const [feedbacks, setFeedbacks] = useState([]);
-  const [allFeedbacks, setAllFeedbacks] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState(null);
+  const { data, loading, error, reload } = useMentorFeedback();
+  const { confirm, dialog } = useConfirm();
+
   const [search, setSearch] = useState('');
-  const { register, handleSubmit, reset, formState: { errors } } = useForm();
+  const [type, setType] = useState('all');
+  const [modal, setModal] = useState({ open: false, feedback: null });
+  const [students, setStudents] = useState([]);
+  const [studentsLoading, setStudentsLoading] = useState(false);
 
-  const load = async () => {
-    try {
-      const { data } = await mentorApi.getFeedbacks();
-      // backend: { success, feedbacks: [{ mentor, student: {fullName,email}, type, message }] }
-      const list = data.feedbacks || [];
-      setAllFeedbacks(list);
-      setFeedbacks(list);
-    } catch { toast.error('Failed to load feedback'); }
-    setLoading(false);
-  };
-  useEffect(() => { load(); }, []);
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors, isSubmitting },
+  } = useForm();
 
+  // Load assigned students
   useEffect(() => {
-    if (!search) { setFeedbacks(allFeedbacks); return; }
-    setFeedbacks(allFeedbacks.filter(f =>
-      f.student?.fullName?.toLowerCase().includes(search.toLowerCase()) ||
-      f.student?.email?.toLowerCase().includes(search.toLowerCase())
-    ));
-  }, [search, allFeedbacks]);
+    const loadStudents = async () => {
+      setStudentsLoading(true);
 
-  const openAdd = () => { setEditing(null); reset({ type: 'general', message: '' }); setOpen(true); };
-  const openEdit = (f) => {
-    setEditing(f);
-    reset({ student: f.student?._id, type: f.type, message: f.message });
-    setOpen(true);
+      try {
+        const { data } = await mentorApi.getStudents();
+        setStudents(data.students || []);
+      } catch (err) {
+        toast.error(errorMessage(err, 'Could not load assigned students'));
+      } finally {
+        setStudentsLoading(false);
+      }
+    };
+
+    loadStudents();
+  }, []);
+
+  const all = data ?? [];
+
+  const filtered = all
+    .filter(
+      (f) =>
+        (type === 'all' || f.type === type) &&
+        matchesQuery(
+          search,
+          f.student?.fullName,
+          f.student?.email,
+          f.message
+        )
+    )
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+  const pager = usePagination(filtered, PAGE_SIZE, `${type}|${search}`);
+
+  const tabs = [
+    { id: 'all', label: 'All', count: all.length },
+    ...FEEDBACK_TYPES.map((t) => ({
+      id: t,
+      label: label(t),
+      count: all.filter((f) => f.type === t).length,
+    })),
+  ];
+
+  const openAdd = () => {
+    reset({ student: '', type: 'general', message: '' });
+    setModal({ open: true, feedback: null });
   };
 
-  const onSubmit = async (data) => {
-    // Backend expects: { student (user id or email), type, message }
+  const openEdit = (feedback) => {
+    reset({ type: feedback.type, message: feedback.message });
+    setModal({ open: true, feedback });
+  };
+
+  const close = () => setModal((m) => ({ ...m, open: false }));
+
+  const onSubmit = async (form) => {
     try {
-      if (editing) {
-        await mentorApi.updateFeedback(editing._id, { type: data.type, message: data.message });
-        toast.success('Feedback updated!');
+      if (modal.feedback) {
+        await mentorApi.updateFeedback(modal.feedback._id, {
+          type: form.type,
+          message: form.message.trim(),
+        });
+
+        toast.success('Feedback updated');
       } else {
-        await mentorApi.createFeedback(data);
-        toast.success('Feedback sent!');
+        await mentorApi.createFeedback({
+          student: form.student,
+          type: form.type,
+          message: form.message.trim(),
+        });
+
+        toast.success('Feedback sent');
       }
-      setOpen(false);
-      load();
+
+      close();
+      reload();
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to save feedback');
+      toast.error(errorMessage(err, 'Could not save the feedback'));
     }
   };
 
-  const deleteFeedback = async (id) => {
-    if (!confirm('Delete this feedback?')) return;
-    try { await mentorApi.deleteFeedback(id); toast.success('Deleted'); load(); }
-    catch { toast.error('Delete failed'); }
+  const onDelete = async (fb) => {
+    const ok = await confirm({
+      title: 'Delete this feedback?',
+      description: `Your feedback for ${fb.student?.fullName || 'this student'} will be permanently removed.`,
+      confirmLabel: 'Delete',
+    });
+
+    if (!ok) return;
+
+    try {
+      await mentorApi.deleteFeedback(fb._id);
+      toast.success('Feedback deleted');
+      reload();
+    } catch (err) {
+      toast.error(errorMessage(err, 'Could not delete the feedback'));
+    }
   };
 
-  const typeColors = { resume: 'badge-info', project: 'badge-cyan', general: 'badge-success' };
+  let body;
+
+  if (loading) {
+    body = (
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <CardSkeleton key={i} />
+        ))}
+      </div>
+    );
+  } else if (error) {
+    body = <ErrorState title="Couldn't load feedback" onRetry={reload} />;
+  } else if (all.length === 0) {
+    body = (
+      <EmptyState
+        icon={MessageSquare}
+        title="No feedback yet"
+        description="Write feedback on a student's resume, project or progress."
+        action={
+          <Button onClick={openAdd}>
+            <Plus size={16} aria-hidden="true" />
+            Write feedback
+          </Button>
+        }
+      />
+    );
+  } else {
+    body = (
+      <>
+        <Tabs
+          tabs={tabs}
+          value={type}
+          onChange={setType}
+          label="Filter by type"
+          className="mb-4"
+        />
+
+        <SearchBar
+          value={search}
+          onChange={setSearch}
+          placeholder="Search by student or message…"
+          className="mb-4 sm:max-w-sm"
+        />
+
+        {filtered.length === 0 ? (
+          <EmptyState
+            icon={MessageSquare}
+            title="No matching feedback"
+            description="Try a different type or search term."
+          />
+        ) : (
+          <>
+            <ul className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              {pager.pageItems.map((fb) => (
+                <li key={fb._id}>
+                  <Card className="flex h-full flex-col p-5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <Avatar name={fb.student?.fullName} size="md" />
+
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-fg">
+                            {fb.student?.fullName || 'Student'}
+                          </p>
+
+                          <p className="truncate text-xs text-fg-muted">
+                            {fb.student?.email}
+                          </p>
+                        </div>
+                      </div>
+
+                      <StatusBadge status={fb.type} />
+                    </div>
+
+                    <p className="mt-4 whitespace-pre-line text-sm leading-relaxed text-fg-muted">
+                      {fb.message}
+                    </p>
+
+                    <div className="mt-auto flex items-center justify-between pt-4">
+                      <span className="text-xs text-fg-subtle">
+                        {formatDate(fb.createdAt)}
+                      </span>
+
+                      <div className="-mr-1.5 flex">
+                        <IconButton
+                          label="Edit feedback"
+                          onClick={() => openEdit(fb)}
+                        >
+                          <Pencil size={15} aria-hidden="true" />
+                        </IconButton>
+
+                        <IconButton
+                          label="Delete feedback"
+                          variant="danger"
+                          onClick={() => onDelete(fb)}
+                        >
+                          <Trash2 size={15} aria-hidden="true" />
+                        </IconButton>
+                      </div>
+                    </div>
+                  </Card>
+                </li>
+              ))}
+            </ul>
+
+            <Pagination
+              page={pager.page}
+              totalPages={pager.totalPages}
+              onPageChange={pager.setPage}
+              total={pager.total}
+              pageSize={pager.pageSize}
+            />
+          </>
+        )}
+      </>
+    );
+  }
 
   return (
-    <div className="space-y-6">
-      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-white">Student Feedback</h1>
-          <p className="text-white/40 text-sm mt-1">{feedbacks.length} feedback entries</p>
-        </div>
-        <Button onClick={openAdd}><Plus size={16} /> Add Feedback</Button>
-      </motion.div>
+    <>
+      <PageHeader
+        title="Feedback"
+        description="Write and manage feedback for students."
+        actions={
+          <Button onClick={openAdd}>
+            <Plus size={16} aria-hidden="true" />
+            Add feedback
+          </Button>
+        }
+      />
 
-      <SearchBar value={search} onChange={setSearch} placeholder="Search by student name..." />
+      {body}
 
-      {loading ? (
-        <div className="grid md:grid-cols-2 gap-4">{[...Array(4)].map((_, i) => <CardSkeleton key={i} />)}</div>
-      ) : feedbacks.length === 0 ? (
-        <EmptyState icon={MessageSquare} title="No feedback yet" description="Start reviewing students."
-          action={<Button onClick={openAdd}><Plus size={16} /> Add Feedback</Button>} />
-      ) : (
-        <div className="grid md:grid-cols-2 gap-4">
-          <AnimatePresence>
-            {feedbacks.map((fb, i) => (
-              <motion.div key={fb._id} initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95 }} transition={{ delay: i * 0.05 }}
-                className="glass rounded-2xl p-5 border border-white/6 hover-card group">
-                <div className="flex items-start justify-between mb-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-cyan-500 flex items-center justify-center text-sm font-bold text-white">
-                      {fb.student?.fullName?.[0]?.toUpperCase() || 'S'}
-                    </div>
-                    <div>
-                      {/* backend: student.fullName */}
-                      <div className="font-medium text-white text-sm">{fb.student?.fullName || 'Student'}</div>
-                      <div className="text-xs text-white/40">{fb.student?.email}</div>
-                    </div>
-                  </div>
-                  <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button onClick={() => openEdit(fb)} className="p-1.5 rounded-lg hover:bg-white/10 text-white/50 hover:text-white"><Pencil size={12} /></button>
-                    <button onClick={() => deleteFeedback(fb._id)} className="p-1.5 rounded-lg hover:bg-red-500/20 text-white/50 hover:text-red-400"><Trash2 size={12} /></button>
-                  </div>
-                </div>
-                {/* backend: type field (resume|project|general) */}
-                <div className="mb-3">
-                  <span className={`badge ${typeColors[fb.type] || 'badge-info'}`}>{fb.type}</span>
-                </div>
-                {/* backend: message field (not comment) */}
-                <p className="text-sm text-white/60 leading-relaxed">{fb.message}</p>
-                <div className="mt-3 text-xs text-white/25">{fb.createdAt ? new Date(fb.createdAt).toLocaleDateString() : ''}</div>
-              </motion.div>
-            ))}
-          </AnimatePresence>
-        </div>
-      )}
-
-      <Modal isOpen={open} onClose={() => setOpen(false)} title={editing ? 'Edit Feedback' : 'Add Feedback'}>
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-          {!editing && (
-            <Input label="Student ID or Email" placeholder="student@example.com"
+      <Modal
+        isOpen={modal.open}
+        onClose={close}
+        title={modal.feedback ? 'Edit feedback' : 'Add feedback'}
+      >
+        <form
+          onSubmit={handleSubmit(onSubmit)}
+          noValidate
+          className="space-y-4"
+        >
+          {!modal.feedback && (
+            <Select
+              label="Select Student"
+              disabled={studentsLoading || students.length === 0}
               error={errors.student?.message}
-              {...register('student', { required: 'Student required' })} />
+              {...register('student', {
+                required: 'Please select a student',
+              })}
+            >
+              <option value="">
+                {studentsLoading
+                  ? 'Loading students...'
+                  : students.length === 0
+                    ? 'No assigned students'
+                    : 'Choose a student'}
+              </option>
+
+              {students.map((student) => (
+                <option key={student._id} value={student._id}>
+                  {student.fullName} ({student.email})
+                </option>
+              ))}
+            </Select>
           )}
-          {/* backend enum: resume | project | general */}
-          <Select label="Feedback Type" {...register('type', { required: true })}>
-            <option value="general">General</option>
-            <option value="resume">Resume</option>
-            <option value="project">Project</option>
+
+          <Select
+            label="Feedback Type"
+            {...register('type', { required: true })}
+          >
+            {FEEDBACK_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {label(t)}
+              </option>
+            ))}
           </Select>
-          {/* backend field: message (not comment) */}
-          <Textarea label="Message" placeholder="Provide detailed, constructive feedback..."
+
+          <Textarea
+            label="Feedback"
+            rows={6}
+            placeholder="Be specific and constructive."
             error={errors.message?.message}
-            {...register('message', { required: 'Message required', minLength: { value: 10, message: 'Too short' } })}
-            rows={5} />
-          <div className="flex gap-3 pt-2">
-            <Button type="button" variant="secondary" onClick={() => setOpen(false)} className="flex-1">Cancel</Button>
-            <Button type="submit" className="flex-1">{editing ? 'Update' : 'Send'} Feedback</Button>
+            {...register('message', {
+              required: 'Write your feedback',
+              minLength: {
+                value: 10,
+                message: 'Feedback must be at least 10 characters',
+              },
+            })}
+          />
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="secondary" onClick={close}>
+              Cancel
+            </Button>
+
+            <Button
+              type="submit"
+              loading={isSubmitting}
+              disabled={!modal.feedback && (studentsLoading || students.length === 0)}
+            >
+              {modal.feedback ? 'Save changes' : 'Send feedback'}
+            </Button>
           </div>
         </form>
       </Modal>
-    </div>
+
+      {dialog}
+    </>
   );
 };

@@ -1,7 +1,7 @@
 import express from "express";
 import {
   getAllUsers, getAllJobs, getAllApplications,
-  blockUser, deleteUser, getAnalytics
+  blockUser, deleteUser, getAnalytics, assignMentor
 } from "../controllers/admin.controller.js";
 import { isAuthenticated, authorizeRoles } from "../middleware/auth.middleware.js";
 
@@ -12,6 +12,7 @@ router.use(isAuthenticated, authorizeRoles("admin"));
 
 router.get("/analytics", getAnalytics);
 router.get("/users", getAllUsers);
+router.put("/users/:id/mentor", assignMentor);
 router.get("/jobs", getAllJobs);
 router.get("/applications", getAllApplications);
 

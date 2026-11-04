@@ -1,184 +1,221 @@
-import { useState, useEffect } from 'react';
-import { useForm } from 'react-hook-form';
-import { motion } from 'framer-motion';
-import { User, Phone, MapPin, Globe, Save, Camera, Edit3, Eye } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { useForm, useWatch } from 'react-hook-form';
+import { Camera, Globe, GraduationCap, Link2, Briefcase, Code2, ExternalLink, FileText } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { useAuthStore } from '../../store/authStore';
+import { useFetch } from '../../hooks/useFetch';
 import { profileApi } from '../../api/profileApi';
 import { uploadApi } from '../../api/uploadApi';
-import { useAuthStore } from '../../store/authStore';
-import { Input, Textarea, Select } from '../../components/ui/Input';
+import { PageHeader } from '../../components/ui/PageHeader';
+import { Card, CardBody, CardHeader } from '../../components/ui/Card';
+import { Input, Select, Textarea } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
-import { CardSkeleton } from '../../components/ui/Skeleton';
-import toast from 'react-hot-toast';
+import { Avatar } from '../../components/ui/Avatar';
+import { Badge } from '../../components/ui/Badge';
+import { ErrorState } from '../../components/ui/ErrorState';
+import { Skeleton } from '../../components/ui/Skeleton';
+import { errorMessage } from '../../utils/format';
+
+const EXPERIENCE = ['Fresher', '0-1 Year', '1-3 Years', '3+ Years'];
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+const toFormValues = (profile) => ({
+  college: profile?.college ?? '',
+  experience: profile?.experience ?? '',
+  bio: profile?.bio ?? '',
+  github: profile?.socialLinks?.github ?? '',
+  linkedin: profile?.socialLinks?.linkedin ?? '',
+  portfolio: profile?.socialLinks?.portfolio ?? '',
+});
+
+const url = {
+  validate: (v) => !v || /^https?:\/\/\S+\.\S+/.test(v.trim()) || 'Enter a full URL starting with https://',
+};
+
+/**
+ * Save the profile whether or not a document exists yet. Some backend versions
+ * only update an existing profile (returning null otherwise), so fall back to create.
+ */
+const saveProfile = async (payload) => {
+  const res = await profileApi.updateProfile(payload);
+  if (res.data?.profile) return res.data.profile;
+  const created = await profileApi.createProfile(payload);
+  return created.data.profile;
+};
+
+const PreviewLink = ({ icon: Icon, label, href }) =>
+  href ? (
+    <a href={href} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-sm text-brand-fg hover:underline">
+      <Icon size={14} aria-hidden="true" className="shrink-0" />
+      <span className="truncate">{label}</span>
+      <ExternalLink size={12} aria-hidden="true" className="shrink-0 opacity-60" />
+    </a>
+  ) : null;
 
 export const StudentProfile = () => {
-  const { user } = useAuthStore();
-  const [profile, setProfile] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const user = useAuthStore((s) => s.user);
+  const { data: profile, loading, error, reload } = useFetch(() =>
+    profileApi.getProfile().then((res) => res.data.profile ?? null)
+  );
   const [uploading, setUploading] = useState(false);
-  const { register, handleSubmit, reset, formState: { errors } } = useForm();
+  const [photoUrl, setPhotoUrl] = useState(null);
+  const fileRef = useRef(null);
 
-  useEffect(() => {
-    profileApi.getProfile()
-      .then(({ data }) => {
-        const p = data.profile;
-        setProfile(p);
-        if (p) {
-          // Flatten socialLinks for form
-          reset({
-            bio: p.bio,
-            college: p.college,
-            experience: p.experience,
-            github: p.socialLinks?.github,
-            linkedin: p.socialLinks?.linkedin,
-            portfolio: p.socialLinks?.portfolio,
-          });
-        }
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
+  const {
+    register,
+    handleSubmit,
+    control,
+    formState: { errors, isSubmitting, isDirty },
+  } = useForm({ values: toFormValues(profile), resetOptions: { keepDirtyValues: false } });
+  const live = useWatch({ control });
 
-  const onSubmit = async (data) => {
-    setSaving(true);
+  const onSubmit = async (form) => {
     try {
-      // Re-nest socialLinks for backend
-      const payload = {
-        bio: data.bio,
-        college: data.college,
-        experience: data.experience,
-        socialLinks: {
-          github: data.github,
-          linkedin: data.linkedin,
-          portfolio: data.portfolio,
-        },
-      };
-
-      let res;
-      if (profile) {
-        res = await profileApi.updateProfile(payload);
-      } else {
-        res = await profileApi.createProfile(payload);
-      }
-      setProfile(res.data.profile);
-      toast.success('Profile saved!');
-    } catch { toast.error('Save failed'); }
-    setSaving(false);
+      await saveProfile({
+        bio: form.bio,
+        college: form.college,
+        experience: form.experience,
+        socialLinks: { github: form.github, linkedin: form.linkedin, portfolio: form.portfolio },
+      });
+      toast.success('Profile saved');
+      reload();
+    } catch (err) {
+      toast.error(errorMessage(err, 'Could not save your profile'));
+    }
   };
 
-  const handlePhotoUpload = async (e) => {
-    const file = e.target.files[0];
+  const onPhoto = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
+    if (!['image/png', 'image/jpeg'].includes(file.type)) return toast.error('Choose a PNG or JPEG image');
+    if (file.size > MAX_IMAGE_BYTES) return toast.error('Image must be 5 MB or smaller');
+
     setUploading(true);
     try {
       const res = await uploadApi.uploadPhoto(file);
-      // Save photo URL to profile
-      await profileApi.updateProfile({ profilePhoto: res.data.url });
-      setProfile(p => ({ ...p, profilePhoto: res.data.url }));
-      toast.success('Photo updated!');
-    } catch { toast.error('Upload failed'); }
-    setUploading(false);
+      await saveProfile({ profilePhoto: res.data.url });
+      setPhotoUrl(res.data.url);
+      toast.success('Profile photo updated');
+    } catch (err) {
+      toast.error(errorMessage(err, 'Photo upload failed'));
+    } finally {
+      setUploading(false);
+    }
   };
 
-  if (loading) return (
-    <div className="grid lg:grid-cols-3 gap-6">
-      <CardSkeleton />
-      <div className="lg:col-span-2 space-y-4">{[...Array(2)].map((_, i) => <CardSkeleton key={i} />)}</div>
-    </div>
-  );
+  const header = <PageHeader title="Profile" description="Your details and links. The preview updates as you type." />;
+
+  if (loading) {
+    return (
+      <>
+        {header}
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          <Skeleton className="h-96" />
+          <div className="space-y-6 lg:col-span-2">
+            <Skeleton className="h-72" />
+            <Skeleton className="h-52" />
+          </div>
+        </div>
+      </>
+    );
+  }
+  if (error) return <>{header}<ErrorState title="Couldn't load your profile" onRetry={reload} /></>;
+
+  const photo = photoUrl || profile?.profilePhoto || null;
 
   return (
-    <div className="space-y-6">
-      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-white">My Profile</h1>
-          <p className="text-white/40 text-sm mt-1">Manage your public profile</p>
-        </div>
-      </motion.div>
-
-      <div className="grid lg:grid-cols-3 gap-6">
-        {/* Avatar card */}
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
-          <div className="glass rounded-2xl p-6 border border-white/6 text-center">
-            <div className="relative inline-block mb-4">
-              <div className="w-24 h-24 rounded-full bg-gradient-to-br from-indigo-500 to-cyan-500 flex items-center justify-center mx-auto overflow-hidden">
-                {profile?.profilePhoto ? (
-                  <img src={profile.profilePhoto} alt="avatar" className="w-full h-full object-cover" />
-                ) : (
-                  <span className="text-3xl font-bold text-white">{user?.name?.[0]?.toUpperCase() || 'U'}</span>
-                )}
+    <>
+      {header}
+      <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-3">
+        {/* Live preview */}
+        <Card className="lg:sticky lg:top-6">
+          <CardHeader title="Preview" />
+          <CardBody>
+            <div className="flex items-center gap-4">
+              <div className="relative">
+                <Avatar name={user?.name} src={photo} size="xl" />
+                <button
+                  type="button"
+                  onClick={() => fileRef.current?.click()}
+                  disabled={uploading}
+                  aria-label="Change profile photo"
+                  className="absolute -bottom-1 -right-1 flex h-8 w-8 items-center justify-center rounded-full border border-line-strong bg-surface text-fg-muted shadow-card hover:bg-subtle hover:text-fg disabled:opacity-50"
+                >
+                  <Camera size={14} aria-hidden="true" />
+                </button>
+                <input ref={fileRef} type="file" accept="image/png,image/jpeg" onChange={onPhoto} className="sr-only" tabIndex={-1} aria-hidden="true" />
               </div>
-              <label className="absolute bottom-0 right-0 w-8 h-8 bg-indigo-600 rounded-full flex items-center justify-center cursor-pointer hover:bg-indigo-500 transition-all">
-                {uploading
-                  ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  : <Camera size={14} className="text-white" />}
-                <input type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} />
-              </label>
+              <div className="min-w-0">
+                <p className="truncate text-base font-semibold text-fg">{user?.name}</p>
+                <p className="truncate text-sm text-fg-muted">{user?.email}</p>
+                <Badge variant="info" className="mt-2">Student</Badge>
+              </div>
             </div>
-            <div className="text-lg font-semibold text-white">{user?.name}</div>
-            <div className="text-sm text-white/40 mt-1">{user?.email}</div>
-            <div className="mt-3">
-              <span className="px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-xs font-semibold text-indigo-400 capitalize">
-                {user?.role}
-              </span>
+
+            <dl className="mt-5 space-y-2.5 text-sm">
+              {live.college && (
+                <div className="flex items-center gap-2 text-fg-muted">
+                  <GraduationCap size={14} aria-hidden="true" className="shrink-0 text-fg-subtle" />
+                  <dt className="sr-only">College</dt><dd className="truncate">{live.college}</dd>
+                </div>
+              )}
+              {live.experience && (
+                <div className="flex items-center gap-2 text-fg-muted">
+                  <Briefcase size={14} aria-hidden="true" className="shrink-0 text-fg-subtle" />
+                  <dt className="sr-only">Experience</dt><dd>{live.experience}</dd>
+                </div>
+              )}
+            </dl>
+
+            {live.bio ? (
+              <p className="mt-4 whitespace-pre-line text-sm leading-relaxed text-fg-muted">{live.bio}</p>
+            ) : (
+              <p className="mt-4 text-sm text-fg-subtle">Your bio will appear here.</p>
+            )}
+
+            <div className="mt-4 space-y-2">
+              <PreviewLink icon={Code2} label="GitHub" href={live.github?.trim()} />
+              <PreviewLink icon={Link2} label="LinkedIn" href={live.linkedin?.trim()} />
+              <PreviewLink icon={Globe} label="Portfolio" href={live.portfolio?.trim()} />
+              <PreviewLink icon={FileText} label="Resume" href={profile?.resume} />
             </div>
-            {profile?.college && (
-              <div className="mt-3 text-sm text-white/50">{profile.college}</div>
-            )}
-            {profile?.resume && (
-              <a href={profile.resume} target="_blank" rel="noreferrer"
-                className="mt-4 flex items-center justify-center gap-2 text-xs text-cyan-400 hover:text-cyan-300">
-                <Eye size={12} /> View Resume
-              </a>
-            )}
-          </div>
-        </motion.div>
+          </CardBody>
+        </Card>
 
         {/* Form */}
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="lg:col-span-2">
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
-            {/* About */}
-            <div className="glass rounded-2xl p-6 border border-white/6">
-              <div className="flex items-center gap-2 mb-5">
-                <User size={16} className="text-indigo-400" />
-                <h3 className="font-semibold text-white">About</h3>
-              </div>
-              <div className="grid md:grid-cols-2 gap-4">
-                <Input label="College / University" placeholder="IIT Bombay" icon={Edit3} {...register('college')} />
-                <Select label="Experience Level" {...register('experience')}>
-                  <option value="">Select level</option>
-                  <option value="Fresher">Fresher</option>
-                  <option value="0-1 Year">0-1 Year</option>
-                  <option value="1-3 Years">1-3 Years</option>
-                  <option value="3+ Years">3+ Years</option>
+        <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-6 lg:col-span-2">
+          <Card>
+            <CardHeader title="About you" description="Shown on your profile." />
+            <CardBody className="space-y-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Input label="College / university" placeholder="e.g. State Engineering College" optional {...register('college')} />
+                <Select label="Experience level" optional {...register('experience')}>
+                  <option value="">Select a level</option>
+                  {EXPERIENCE.map((level) => <option key={level} value={level}>{level}</option>)}
                 </Select>
               </div>
-              <div className="mt-4">
-                <Textarea label="Bio" placeholder="Tell recruiters about yourself..." {...register('bio')} />
-              </div>
-            </div>
+              <Textarea label="Bio" rows={5} placeholder="A few sentences about your background and what you're looking for." optional {...register('bio')} />
+            </CardBody>
+          </Card>
 
-            {/* Social links */}
-            <div className="glass rounded-2xl p-6 border border-white/6">
-              <div className="flex items-center gap-2 mb-5">
-                <Globe size={16} className="text-cyan-400" />
-                <h3 className="font-semibold text-white">Social Links</h3>
+          <Card>
+            <CardHeader title="Links" description="Add the profiles you want to share." />
+            <CardBody className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Input label="GitHub" placeholder="https://github.com/username" optional error={errors.github?.message} {...register('github', url)} />
+              <Input label="LinkedIn" placeholder="https://linkedin.com/in/username" optional error={errors.linkedin?.message} {...register('linkedin', url)} />
+              <div className="sm:col-span-2">
+                <Input label="Portfolio" placeholder="https://your-site.com" optional error={errors.portfolio?.message} {...register('portfolio', url)} />
               </div>
-              <div className="space-y-4">
-                <Input label="GitHub URL" placeholder="https://github.com/username" {...register('github')} />
-                <Input label="LinkedIn URL" placeholder="https://linkedin.com/in/username" {...register('linkedin')} />
-                <Input label="Portfolio URL" placeholder="https://yoursite.com" {...register('portfolio')} />
-              </div>
-            </div>
+            </CardBody>
+          </Card>
 
-            <div className="flex justify-end">
-              <Button type="submit" loading={saving} size="lg">
-                <Save size={16} /> Save Profile
-              </Button>
-            </div>
-          </form>
-        </motion.div>
+          <div className="flex items-center justify-end gap-3">
+            {isDirty && <span className="text-sm text-fg-subtle">You have unsaved changes</span>}
+            <Button type="submit" loading={isSubmitting}>Save changes</Button>
+          </div>
+        </form>
       </div>
-    </div>
+    </>
   );
 };

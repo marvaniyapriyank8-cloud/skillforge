@@ -23,6 +23,13 @@ export const createFeedback = async (req, res) => {
       return res.status(400).json({ success: false, message: "student is required" });
     }
 
+    const assignedStudent = await User.findOne({
+      _id: studentId, role: "student", assignedMentor: req.user._id
+    });
+    if (!assignedStudent) {
+      return res.status(403).json({ success: false, message: "You can only give feedback to students assigned to you" });
+    }
+
     const feedback = await Feedback.create({
       mentor: req.user._id,
       student: studentId,

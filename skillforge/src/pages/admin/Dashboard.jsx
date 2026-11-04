@@ -1,123 +1,141 @@
-import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
-import { Users, Briefcase, ClipboardList, Shield } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { ArrowRight, Briefcase, ClipboardList, ShieldOff, Users } from 'lucide-react';
+import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { useFetch } from '../../hooks/useFetch';
 import { adminApi } from '../../api/adminApi';
-import { StatCard } from '../../components/ui/Card';
-import { CardSkeleton } from '../../components/ui/Skeleton';
-import toast from 'react-hot-toast';
+import { PageHeader } from '../../components/ui/PageHeader';
+import { Card, CardBody, CardHeader, StatCard } from '../../components/ui/Card';
+import { Avatar } from '../../components/ui/Avatar';
+import { StatusBadge } from '../../components/ui/Badge';
+import { EmptyState } from '../../components/ui/EmptyState';
+import { ErrorState } from '../../components/ui/ErrorState';
+import { Skeleton, StatSkeleton } from '../../components/ui/Skeleton';
+import { ChartTooltip } from '../../components/shared/ChartTooltip';
+import { axisTick } from '../../components/shared/chartTheme';
+import { formatDate } from '../../utils/format';
+import { APPLICATION_STATUSES } from '../../utils/ui';
 
-const COLORS = ['#6366f1', '#22d3ee', '#4ade80', '#f472b6'];
+const ROLES = ['student', 'recruiter', 'mentor', 'admin'];
+const STATUS_COLOR = {
+  Applied: 'var(--chart-1)',
+  Shortlisted: 'var(--chart-3)',
+  Selected: 'var(--chart-2)',
+  Rejected: 'var(--chart-4)',
+};
+
+const loadAdmin = async () => {
+  const results = await Promise.allSettled([adminApi.getDashboard(), adminApi.getUsers(), adminApi.getAllApplications()]);
+  if (results.every((r) => r.status === 'rejected')) throw results[0].reason;
+  const [analytics, users, applications] = results.map((r) => (r.status === 'fulfilled' ? r.value.data : null));
+  return {
+    analytics: analytics?.analytics ?? null,
+    users: users?.users ?? [],
+    applications: applications?.applications ?? [],
+  };
+};
+
+const ChartFrame = ({ height, children }) => (
+  <div style={{ height }}>
+    <ResponsiveContainer width="100%" height="100%">{children}</ResponsiveContainer>
+  </div>
+);
 
 export const AdminDashboard = () => {
-  const [analytics, setAnalytics] = useState(null);
-  const [users, setUsers] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const { data, loading, error, reload } = useFetch(loadAdmin);
 
-  useEffect(() => {
-    Promise.allSettled([adminApi.getDashboard(), adminApi.getUsers()])
-      .then(([analyticsRes, usersRes]) => {
-        // backend /admin/analytics returns { success, analytics: { totalUsers, totalJobs, totalApplications } }
-        if (analyticsRes.status === 'fulfilled') {
-          setAnalytics(analyticsRes.value.data.analytics);
-        }
-        if (usersRes.status === 'fulfilled') {
-          setUsers(usersRes.value.data.users || []);
-        }
-      })
-      .catch(() => toast.error('Failed to load dashboard'))
-      .finally(() => setLoading(false));
-  }, []);
+  const header = <PageHeader title="Overview" description="Platform activity at a glance." />;
 
-  // Derive role distribution from users list
-  const roleData = [
-    { name: 'Students', value: users.filter(u => u.role === 'student').length },
-    { name: 'Recruiters', value: users.filter(u => u.role === 'recruiter').length },
-    { name: 'Mentors', value: users.filter(u => u.role === 'mentor').length },
-    { name: 'Admins', value: users.filter(u => u.role === 'admin').length },
-  ].filter(d => d.value > 0);
+  if (loading) {
+    return (
+      <>
+        {header}
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">{Array.from({ length: 4 }).map((_, i) => <StatSkeleton key={i} />)}</div>
+        <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2"><Skeleton className="h-72" /><Skeleton className="h-72" /></div>
+      </>
+    );
+  }
+  if (error) return <>{header}<ErrorState onRetry={reload} /></>;
+
+  const { analytics, users, applications } = data;
+  const byRole = ROLES.map((role) => ({ name: role[0].toUpperCase() + role.slice(1) + 's', value: users.filter((u) => u.role === role).length }));
+  const byStatus = APPLICATION_STATUSES.map((status) => ({ name: status, value: applications.filter((a) => a.status === status).length }));
+  const newest = [...users].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 6);
 
   return (
-    <div className="space-y-8">
-      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center">
-            <Shield size={18} className="text-red-400" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-white">Admin Dashboard</h1>
-            <p className="text-white/40 text-sm">Platform overview & management</p>
-          </div>
-        </div>
-      </motion.div>
-
-      {loading ? (
-        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-          {[...Array(3)].map((_, i) => <CardSkeleton key={i} />)}
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-          {/* backend analytics fields: totalUsers, totalJobs, totalApplications */}
-          <StatCard label="Total Users" value={analytics?.totalUsers ?? users.length} icon={Users} color="indigo" />
-          <StatCard label="Total Jobs" value={analytics?.totalJobs ?? 0} icon={Briefcase} color="cyan" />
-          <StatCard label="Applications" value={analytics?.totalApplications ?? 0} icon={ClipboardList} color="green" />
-        </div>
-      )}
-
-      <div className="grid lg:grid-cols-2 gap-6">
-        {/* Role distribution pie */}
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
-          className="glass rounded-2xl p-6 border border-white/6">
-          <h3 className="font-semibold text-white mb-5">User Distribution</h3>
-          {roleData.length > 0 ? (
-            <div className="flex items-center gap-6">
-              <ResponsiveContainer width="55%" height={200}>
-                <PieChart>
-                  <Pie data={roleData} cx="50%" cy="50%" innerRadius={55} outerRadius={80} dataKey="value" paddingAngle={3}>
-                    {roleData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                  </Pie>
-                  <Tooltip contentStyle={{ background: '#1e1e32', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12, color: '#fff' }} />
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="space-y-3 flex-1">
-                {roleData.map(({ name, value }, i) => (
-                  <div key={name} className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full shrink-0" style={{ background: COLORS[i] }} />
-                    <span className="text-sm text-white/60 flex-1">{name}</span>
-                    <span className="text-sm font-semibold text-white">{value}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-center justify-center h-40 text-white/30 text-sm">No users yet</div>
-          )}
-        </motion.div>
-
-        {/* Recent users */}
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}
-          className="glass rounded-2xl p-6 border border-white/6">
-          <h3 className="font-semibold text-white mb-5">Recent Users</h3>
-          <div className="space-y-3">
-            {users.slice(0, 5).map((u, i) => (
-              <div key={u._id} className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-cyan-500 flex items-center justify-center text-xs font-bold text-white shrink-0">
-                  {u.fullName?.[0]?.toUpperCase() || 'U'}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-white truncate">{u.fullName}</div>
-                  <div className="text-xs text-white/40 truncate">{u.email}</div>
-                </div>
-                <span className={`badge shrink-0 ${
-                  u.role === 'admin' ? 'badge-danger' : u.role === 'recruiter' ? 'badge-info' :
-                  u.role === 'mentor' ? 'badge-success' : 'badge-cyan'
-                }`}>{u.role}</span>
-              </div>
-            ))}
-            {users.length === 0 && <div className="text-center text-white/30 text-sm py-4">No users yet</div>}
-          </div>
-        </motion.div>
+    <>
+      {header}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <StatCard label="Users" value={analytics?.totalUsers ?? users.length} icon={Users} />
+        <StatCard label="Jobs" value={analytics?.totalJobs ?? '—'} icon={Briefcase} />
+        <StatCard label="Applications" value={analytics?.totalApplications ?? applications.length} icon={ClipboardList} />
+        <StatCard label="Blocked accounts" value={users.filter((u) => u.isBlocked).length} icon={ShieldOff} />
       </div>
-    </div>
+
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <Card>
+          <CardHeader title="Users by role" />
+          <CardBody>
+            <ChartFrame height={240}>
+              <BarChart data={byRole} margin={{ top: 8, right: 8, left: -16, bottom: 0 }} barSize={36}>
+                <CartesianGrid vertical={false} stroke="var(--line)" />
+                <XAxis dataKey="name" tick={axisTick} axisLine={false} tickLine={false} />
+                <YAxis allowDecimals={false} tick={axisTick} axisLine={false} tickLine={false} />
+                <Tooltip cursor={{ fill: 'var(--subtle)' }} content={<ChartTooltip unit="users" />} />
+                <Bar dataKey="value" fill="var(--chart-1)" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ChartFrame>
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardHeader title="Applications by status" />
+          <CardBody>
+            {applications.length === 0 ? (
+              <EmptyState bordered={false} icon={ClipboardList} title="No applications yet" description="Status breakdown appears once students apply." />
+            ) : (
+              <ChartFrame height={240}>
+                <BarChart data={byStatus} margin={{ top: 8, right: 8, left: -16, bottom: 0 }} barSize={36}>
+                  <CartesianGrid vertical={false} stroke="var(--line)" />
+                  <XAxis dataKey="name" tick={axisTick} axisLine={false} tickLine={false} />
+                  <YAxis allowDecimals={false} tick={axisTick} axisLine={false} tickLine={false} />
+                  <Tooltip cursor={{ fill: 'var(--subtle)' }} content={<ChartTooltip unit="applications" />} />
+                  <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                    {byStatus.map((entry) => <Cell key={entry.name} fill={STATUS_COLOR[entry.name]} />)}
+                  </Bar>
+                </BarChart>
+              </ChartFrame>
+            )}
+          </CardBody>
+        </Card>
+      </div>
+
+      <Card className="mt-6">
+        <CardHeader
+          title="Newest users"
+          action={
+            <Link to="/admin/users" className="inline-flex items-center gap-1 text-sm font-medium text-brand-fg hover:underline">
+              Manage users <ArrowRight size={14} aria-hidden="true" />
+            </Link>
+          }
+        />
+        {newest.length === 0 ? (
+          <EmptyState bordered={false} icon={Users} title="No users yet" />
+        ) : (
+          <ul className="divide-y divide-line">
+            {newest.map((u) => (
+              <li key={u._id} className="flex items-center gap-3 px-5 py-3">
+                <Avatar name={u.fullName} size="md" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-fg">{u.fullName}</p>
+                  <p className="truncate text-xs text-fg-muted">{u.email}</p>
+                </div>
+                <span className="hidden text-xs text-fg-subtle sm:block">{formatDate(u.createdAt)}</span>
+                <StatusBadge status={u.role} />
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+    </>
   );
 };

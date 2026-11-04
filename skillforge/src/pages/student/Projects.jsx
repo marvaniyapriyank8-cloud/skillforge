@@ -1,175 +1,219 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Pencil, Trash2, FolderOpen, GitBranch, ExternalLink } from 'lucide-react';
+import { Code2, ExternalLink, FolderGit2, Pencil, Plus, Trash2, X } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { useFetch } from '../../hooks/useFetch';
+import { useConfirm } from '../../hooks/useConfirm';
 import { projectApi } from '../../api/projectApi';
+import { PageHeader } from '../../components/ui/PageHeader';
+import { Card } from '../../components/ui/Card';
 import { Input, Textarea } from '../../components/ui/Input';
-import { Button } from '../../components/ui/Button';
+import { Button, IconButton } from '../../components/ui/Button';
+import { Badge } from '../../components/ui/Badge';
 import { Modal } from '../../components/ui/Modal';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { ErrorState } from '../../components/ui/ErrorState';
 import { CardSkeleton } from '../../components/ui/Skeleton';
-import toast from 'react-hot-toast';
+import { errorMessage, plural } from '../../utils/format';
+
+const urlRule = {
+  validate: (v) => !v || /^https?:\/\/\S+\.\S+/.test(v.trim()) || 'Enter a full URL starting with https://',
+};
 
 export const StudentProjects = () => {
-  const [projects, setProjects] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState(null);
-  const [techInput, setTechInput] = useState('');
+  const { data: projects, loading, error, reload } = useFetch(() =>
+    projectApi.getProjects().then((res) => res.data.projects ?? [])
+  );
+  const { confirm, dialog } = useConfirm();
+  const [modal, setModal] = useState({ open: false, project: null });
   const [techStack, setTechStack] = useState([]);
-  const { register, handleSubmit, reset, formState: { errors } } = useForm();
+  const [techInput, setTechInput] = useState('');
 
-  const load = async () => {
-    try {
-      const { data } = await projectApi.getProjects();
-      setProjects(data.projects || []);   // backend: { success, projects: [] }
-    } catch { toast.error('Failed to load projects'); }
-    setLoading(false);
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors, isSubmitting },
+  } = useForm();
+
+  const openAdd = () => {
+    reset({ title: '', description: '', githubLink: '', liveDemo: '' });
+    setTechStack([]);
+    setTechInput('');
+    setModal({ open: true, project: null });
   };
-  useEffect(() => { load(); }, []);
-
-  const openAdd = () => { setEditing(null); reset({}); setTechStack([]); setOpen(true); };
   const openEdit = (p) => {
-    setEditing(p);
-    reset({ title: p.title, description: p.description, githubLink: p.githubLink, liveDemo: p.liveDemo });
-    setTechStack(p.techStack || []);
-    setOpen(true);
+    reset({ title: p.title, description: p.description, githubLink: p.githubLink ?? '', liveDemo: p.liveDemo ?? '' });
+    setTechStack(p.techStack ?? []);
+    setTechInput('');
+    setModal({ open: true, project: p });
   };
+  const close = () => setModal((m) => ({ ...m, open: false }));
 
-  const addTech = (e) => {
-    if (e.key === 'Enter' && techInput.trim()) {
+  const addTech = (value) => {
+    const items = value.split(',').map((t) => t.trim()).filter(Boolean);
+    if (items.length) setTechStack((prev) => [...new Set([...prev, ...items])]);
+    setTechInput('');
+  };
+  const onTechKey = (e) => {
+    if (e.key === 'Enter' || e.key === ',') {
       e.preventDefault();
-      setTechStack(prev => [...new Set([...prev, techInput.trim()])]);
-      setTechInput('');
+      addTech(techInput);
+    } else if (e.key === 'Backspace' && !techInput && techStack.length) {
+      setTechStack((prev) => prev.slice(0, -1));
     }
   };
 
-  const onSubmit = async (data) => {
-    // Backend field: liveDemo (not liveLink)
-    const payload = { ...data, techStack };
+  const onSubmit = async (form) => {
+    // Include anything still typed in the tech field
+    const pending = techInput.split(',').map((t) => t.trim()).filter(Boolean);
+    const payload = {
+      title: form.title.trim(),
+      description: form.description.trim(),
+      githubLink: form.githubLink.trim(),
+      liveDemo: form.liveDemo.trim(),
+      techStack: [...new Set([...techStack, ...pending])],
+    };
     try {
-      if (editing) {
-        await projectApi.updateProject(editing._id, payload);
-        toast.success('Project updated!');
+      if (modal.project) {
+        await projectApi.updateProject(modal.project._id, payload);
+        toast.success('Project updated');
       } else {
         await projectApi.addProject(payload);
-        toast.success('Project added!');
+        toast.success('Project added');
       }
-      setOpen(false);
-      load();
+      close();
+      reload();
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to save project');
+      toast.error(errorMessage(err, 'Could not save the project'));
     }
   };
 
-  const deleteProject = async (id) => {
-    if (!confirm('Delete this project?')) return;
+  const onDelete = async (project) => {
+    const ok = await confirm({
+      title: `Delete "${project.title}"?`,
+      description: 'This project will be permanently removed from your profile.',
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
     try {
-      await projectApi.deleteProject(id);
+      await projectApi.deleteProject(project._id);
       toast.success('Project deleted');
-      load();
-    } catch { toast.error('Delete failed'); }
+      reload();
+    } catch (err) {
+      toast.error(errorMessage(err, 'Could not delete the project'));
+    }
   };
 
-  return (
-    <div className="space-y-6">
-      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-white">My Projects</h1>
-          <p className="text-white/40 text-sm mt-1">{projects.length} projects</p>
-        </div>
-        <Button onClick={openAdd}><Plus size={16} /> Add Project</Button>
-      </motion.div>
+  const header = (
+    <PageHeader
+      title="Projects"
+      description={projects ? `${plural(projects.length, 'project')} on your profile.` : 'The projects on your profile.'}
+      actions={<Button onClick={openAdd}><Plus size={16} aria-hidden="true" /> Add project</Button>}
+    />
+  );
 
-      {loading ? (
-        <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-5">{[...Array(3)].map((_, i) => <CardSkeleton key={i} />)}</div>
-      ) : projects.length === 0 ? (
-        <EmptyState icon={FolderOpen} title="No projects yet" description="Add your first project to showcase your work."
-          action={<Button onClick={openAdd}><Plus size={16} /> Add project</Button>} />
-      ) : (
-        <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-5">
-          <AnimatePresence>
-            {projects.map((p, i) => (
-              <motion.div key={p._id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95 }} transition={{ delay: i * 0.07 }}
-                className="glass rounded-2xl border border-white/6 hover-card group overflow-hidden">
-                <div className="h-1.5 bg-gradient-to-r from-indigo-500 to-cyan-500" />
-                <div className="p-5">
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center">
-                      <FolderOpen size={18} className="text-indigo-400" />
-                    </div>
-                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button onClick={() => openEdit(p)} className="p-1.5 rounded-lg hover:bg-white/10 text-white/50 hover:text-white">
-                        <Pencil size={12} />
-                      </button>
-                      <button onClick={() => deleteProject(p._id)} className="p-1.5 rounded-lg hover:bg-red-500/20 text-white/50 hover:text-red-400">
-                        <Trash2 size={12} />
-                      </button>
-                    </div>
-                  </div>
-                  <h3 className="font-semibold text-white mb-1">{p.title}</h3>
-                  <p className="text-sm text-white/45 leading-relaxed mb-4 line-clamp-2">{p.description}</p>
-                  {p.techStack?.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 mb-4">
-                      {p.techStack.slice(0, 4).map(t => (
-                        <span key={t} className="px-2 py-0.5 rounded-md bg-white/5 border border-white/8 text-xs text-white/50">{t}</span>
-                      ))}
-                      {p.techStack.length > 4 && <span className="text-xs text-white/30">+{p.techStack.length - 4}</span>}
-                    </div>
-                  )}
-                  <div className="flex gap-4 pt-3 border-t border-white/6">
-                    {p.githubLink && (
-                      <a href={p.githubLink} target="_blank" rel="noreferrer"
-                        className="flex items-center gap-1.5 text-xs text-white/40 hover:text-white transition-colors">
-                        <GitBranch size={12} /> Code
-                      </a>
-                    )}
-                    {p.liveDemo && (   /* backend field: liveDemo */
-                      <a href={p.liveDemo} target="_blank" rel="noreferrer"
-                        className="flex items-center gap-1.5 text-xs text-cyan-400 hover:text-cyan-300 transition-colors">
-                        <ExternalLink size={12} /> Live Demo
-                      </a>
-                    )}
-                  </div>
+  let body;
+  if (loading) {
+    body = <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">{Array.from({ length: 3 }).map((_, i) => <CardSkeleton key={i} />)}</div>;
+  } else if (error) {
+    body = <ErrorState title="Couldn't load your projects" onRetry={reload} />;
+  } else if (projects.length === 0) {
+    body = (
+      <EmptyState
+        icon={FolderGit2}
+        title="No projects yet"
+        description="Add things you've built, with links to the code and a live demo."
+        action={<Button onClick={openAdd}><Plus size={16} aria-hidden="true" /> Add your first project</Button>}
+      />
+    );
+  } else {
+    body = (
+      <ul className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {projects.map((p) => (
+          <li key={p._id}>
+            <Card className="flex h-full flex-col p-5">
+              <div className="flex items-start justify-between gap-2">
+                <h2 className="font-semibold text-fg">{p.title}</h2>
+                <div className="-mr-1.5 -mt-1 flex shrink-0">
+                  <IconButton label={`Edit ${p.title}`} onClick={() => openEdit(p)}><Pencil size={15} aria-hidden="true" /></IconButton>
+                  <IconButton label={`Delete ${p.title}`} variant="danger" onClick={() => onDelete(p)}><Trash2 size={15} aria-hidden="true" /></IconButton>
                 </div>
-              </motion.div>
-            ))}
-          </AnimatePresence>
-        </div>
-      )}
-
-      <Modal isOpen={open} onClose={() => setOpen(false)} title={editing ? 'Edit Project' : 'Add Project'} size="lg">
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-          <Input label="Project Title" placeholder="e.g. E-Commerce Platform" error={errors.title?.message}
-            {...register('title', { required: 'Title required' })} />
-          <Textarea label="Description" placeholder="What did you build? What problem does it solve?" error={errors.description?.message}
-            {...register('description', { required: 'Description required' })} />
-          <div className="grid grid-cols-2 gap-4">
-            <Input label="GitHub Link" placeholder="https://github.com/..." {...register('githubLink')} />
-            <Input label="Live Demo" placeholder="https://yourapp.com" {...register('liveDemo')} />
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-white/70">Tech Stack <span className="text-white/30 text-xs">(press Enter to add)</span></label>
-            <input value={techInput} onChange={e => setTechInput(e.target.value)} onKeyDown={addTech}
-              placeholder="React, Node.js, MongoDB..." className="input-field" />
-            {techStack.length > 0 && (
-              <div className="flex flex-wrap gap-2 mt-2">
-                {techStack.map(t => (
-                  <span key={t} className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-xs text-indigo-400">
-                    {t}
-                    <button type="button" onClick={() => setTechStack(ts => ts.filter(x => x !== t))} className="hover:text-red-400">×</button>
-                  </span>
-                ))}
               </div>
-            )}
+              <p className="mt-1.5 line-clamp-3 text-sm leading-relaxed text-fg-muted">{p.description}</p>
+              {p.techStack?.length > 0 && (
+                <div className="mt-4 flex flex-wrap gap-1.5">
+                  {p.techStack.map((t) => <Badge key={t}>{t}</Badge>)}
+                </div>
+              )}
+              {(p.githubLink || p.liveDemo) && (
+                <div className="mt-auto flex gap-4 border-t border-line pt-4 text-sm">
+                  {p.githubLink && (
+                    <a href={p.githubLink} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 font-medium text-fg-muted hover:text-fg">
+                      <Code2 size={14} aria-hidden="true" /> Source
+                    </a>
+                  )}
+                  {p.liveDemo && (
+                    <a href={p.liveDemo} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 font-medium text-brand-fg hover:underline">
+                      <ExternalLink size={14} aria-hidden="true" /> Live demo
+                    </a>
+                  )}
+                </div>
+              )}
+            </Card>
+          </li>
+        ))}
+      </ul>
+    );
+  }
+
+  return (
+    <>
+      {header}
+      {body}
+
+      <Modal isOpen={modal.open} onClose={close} title={modal.project ? 'Edit project' : 'Add project'} size="lg">
+        <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4">
+          <Input label="Title" placeholder="e.g. Task manager app" error={errors.title?.message} {...register('title', { required: 'Enter a title' })} />
+          <Textarea label="Description" rows={4} placeholder="What does it do, and what did you build?" error={errors.description?.message} {...register('description', { required: 'Enter a description' })} />
+
+          <div>
+            <label htmlFor="tech-input" className="mb-1.5 block text-sm font-medium text-fg">
+              Tech stack <span className="font-normal text-fg-subtle">(optional)</span>
+            </label>
+            <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-line-strong bg-surface px-2 py-1.5 shadow-card focus-within:border-brand focus-within:ring-2 focus-within:ring-brand/25">
+              {techStack.map((t) => (
+                <span key={t} className="inline-flex items-center gap-1 rounded-md bg-subtle py-0.5 pl-2 pr-1 text-xs font-medium text-fg">
+                  {t}
+                  <button type="button" onClick={() => setTechStack((prev) => prev.filter((x) => x !== t))} aria-label={`Remove ${t}`} className="rounded p-0.5 text-fg-subtle hover:bg-line hover:text-fg">
+                    <X size={12} aria-hidden="true" />
+                  </button>
+                </span>
+              ))}
+              <input
+                id="tech-input"
+                value={techInput}
+                onChange={(e) => setTechInput(e.target.value)}
+                onKeyDown={onTechKey}
+                onBlur={() => addTech(techInput)}
+                placeholder={techStack.length ? '' : 'React, Node.js, MongoDB'}
+                className="min-w-[8rem] flex-1 bg-transparent px-1 py-1 text-sm text-fg placeholder:text-fg-subtle focus:outline-none"
+              />
+            </div>
+            <p className="mt-1.5 text-xs text-fg-subtle">Press Enter or comma to add each technology.</p>
           </div>
-          <div className="flex gap-3 pt-2">
-            <Button type="button" variant="secondary" onClick={() => setOpen(false)} className="flex-1">Cancel</Button>
-            <Button type="submit" className="flex-1">{editing ? 'Update' : 'Add'} Project</Button>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Input label="GitHub link" placeholder="https://github.com/…" optional error={errors.githubLink?.message} {...register('githubLink', urlRule)} />
+            <Input label="Live demo" placeholder="https://…" optional error={errors.liveDemo?.message} {...register('liveDemo', urlRule)} />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="secondary" onClick={close}>Cancel</Button>
+            <Button type="submit" loading={isSubmitting}>{modal.project ? 'Save changes' : 'Add project'}</Button>
           </div>
         </form>
       </Modal>
-    </div>
+      {dialog}
+    </>
   );
 };

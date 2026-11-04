@@ -4,7 +4,20 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>skillforge</title>
+    <meta name="description" content="SkillForge is a career platform where students build profiles and get AI-assisted feedback, recruiters post jobs, and mentors review work." />
+    <meta name="theme-color" content="#3748c6" />
+    <title>SkillForge</title>
+    <script>
+      // Apply the saved (or system) theme before first paint to avoid a flash.
+      (function () {
+        try {
+          var saved = JSON.parse(localStorage.getItem('sf-theme') || 'null');
+          var theme = saved && saved.state && saved.state.theme;
+          if (!theme) theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+          if (theme === 'dark') document.documentElement.classList.add('dark');
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

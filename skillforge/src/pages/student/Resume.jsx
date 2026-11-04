@@ -1,281 +1,315 @@
-import { useState, useEffect, useRef } from 'react';
-import { motion } from 'framer-motion';
+import { useRef, useState } from 'react';
 import {
-  Upload, FileText, Image, Award, Brain, Target,
-  AlertCircle, Map, Eye, CheckCircle2, Loader2, RefreshCw
+  Award, Brain, CheckCircle2, ExternalLink, FileSearch, FileText, Image as ImageIcon,
+  Route, Target, Upload,
 } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { useFetch } from '../../hooks/useFetch';
+import { profileApi } from '../../api/profileApi';
 import { uploadApi } from '../../api/uploadApi';
 import { aiApi } from '../../api/aiApi';
-import { profileApi } from '../../api/profileApi';
+import { PageHeader } from '../../components/ui/PageHeader';
+import { Card, CardBody, CardHeader } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
-import toast from 'react-hot-toast';
+import { Input } from '../../components/ui/Input';
+import { Tabs } from '../../components/ui/Tabs';
+import { Skeleton } from '../../components/ui/Skeleton';
+import { AiOutput } from '../../components/ui/AiOutput';
+import { errorMessage } from '../../utils/format';
 
-const UploadZone = ({ label, icon: Icon, accept, onUpload, uploaded, uploading }) => (
-  <div className={`border-2 border-dashed rounded-2xl p-6 text-center transition-all ${uploaded ? 'border-green-500/40 bg-green-500/5' : 'border-white/10 hover:border-indigo-500/40 hover:bg-indigo-500/5'}`}>
-    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-3 ${uploaded ? 'bg-green-500/15' : 'bg-white/5'}`}>
-      {uploaded ? <CheckCircle2 size={22} className="text-green-400" /> : <Icon size={22} className="text-white/30" />}
-    </div>
-    <div className="font-medium text-white text-sm mb-1">{label}</div>
-    {uploaded
-      ? <div className="text-xs text-green-400 mb-3">Uploaded ✓</div>
-      : <div className="text-xs text-white/30 mb-4">PDF or image, max 5MB</div>}
-    <label className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer transition-all ${uploaded ? 'bg-green-500/10 text-green-400 hover:bg-green-500/20 border border-green-500/20' : 'bg-indigo-600 text-white hover:bg-indigo-500'}`}>
-      {uploading ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
-      {uploaded ? 'Re-upload' : 'Upload File'}
-      <input type="file" accept={accept} className="hidden" onChange={e => { if (e.target.files[0]) onUpload(e.target.files[0]); e.target.value = ''; }} />
-    </label>
-  </div>
-);
+const MAX_BYTES = 5 * 1024 * 1024;
+const IMAGE_TYPES = ['image/png', 'image/jpeg'];
+const PDF = 'application/pdf';
 
-const AIResult = ({ title, icon: Icon, content, loading, color = 'indigo' }) => {
-  const colorMap = {
-    indigo: 'border-indigo-500/20 bg-indigo-500/5 text-indigo-400',
-    cyan: 'border-cyan-500/20 bg-cyan-500/5 text-cyan-400',
-    yellow: 'border-yellow-500/20 bg-yellow-500/5 text-yellow-400',
-    green: 'border-green-500/20 bg-green-500/5 text-green-400',
+/** Client-side check that mirrors what the backend accepts. */
+const validateFile = (file, allowed) => {
+  if (!allowed.includes(file.type)) return 'That file type is not supported.';
+  if (file.size > MAX_BYTES) return 'File must be 5 MB or smaller.';
+  return null;
+};
+
+const UploadCard = ({ icon: Icon, title, description, accept, allowed, onUpload, busy, done, children }) => {
+  const inputRef = useRef(null);
+
+  const onChange = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const problem = validateFile(file, allowed);
+    if (problem) return toast.error(problem);
+    onUpload(file);
   };
-  const c = colorMap[color] || colorMap.indigo;
 
   return (
-    <div className={`glass rounded-2xl border overflow-hidden ${c.split(' ')[0]}`}>
-      <div className={`px-5 py-4 border-b border-white/6 flex items-center justify-between ${c.split(' ')[1]}`}>
-        <div className="flex items-center gap-2">
-          <Icon size={16} className={c.split(' ')[2]} />
-          <h3 className="font-semibold text-white text-sm">{title}</h3>
+    <Card className="flex flex-col p-5">
+      <div className="flex items-start gap-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-subtle text-fg-muted">
+          <Icon size={18} aria-hidden="true" />
+        </span>
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold text-fg">{title}</h3>
+          <p className="mt-0.5 text-sm text-fg-muted">{description}</p>
         </div>
-        {loading && <Loader2 size={14} className="text-white/40 animate-spin" />}
       </div>
-      <div className="p-5 max-h-72 overflow-y-auto">
-        {loading
-          ? <div className="space-y-2">{[...Array(5)].map((_, i) => <div key={i} className="skeleton h-3 rounded" style={{ width: `${70 + Math.random() * 30}%` }} />)}</div>
-          : content
-          ? <pre className="text-sm text-white/70 leading-relaxed whitespace-pre-wrap font-sans">{content}</pre>
-          : <div className="text-white/25 text-sm text-center py-6">Run the analysis to see results here</div>}
+      <div className="mt-4 min-h-6 text-sm">{children}</div>
+      <div className="mt-auto pt-4">
+        <Button variant="secondary" size="sm" onClick={() => inputRef.current?.click()} loading={busy}>
+          {!busy && <Upload size={14} aria-hidden="true" />}
+          {done ? 'Replace' : 'Upload'}
+        </Button>
+        <input ref={inputRef} type="file" accept={accept} onChange={onChange} className="sr-only" tabIndex={-1} aria-label={`Choose file for ${title}`} />
       </div>
-    </div>
+    </Card>
   );
 };
 
+const UploadedLink = ({ href, label }) => (
+  <a href={href} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 font-medium text-success-fg hover:underline">
+    <CheckCircle2 size={14} aria-hidden="true" /> {label} <ExternalLink size={12} aria-hidden="true" className="opacity-70" />
+  </a>
+);
+
+const TOOLS = [
+  { id: 'analysis', label: 'Resume analysis', icon: FileSearch },
+  { id: 'gaps', label: 'Skill gap', icon: Target },
+  { id: 'questions', label: 'Interview questions', icon: Brain },
+  { id: 'roadmap', label: 'Learning roadmap', icon: Route },
+];
+
+const ResultArea = ({ busy, text, emptyHint }) => {
+  if (busy) {
+    return (
+      <div role="status" aria-label="Generating" className="space-y-2.5">
+        <Skeleton className="h-4 w-1/3" />
+        <Skeleton className="h-3.5 w-full" />
+        <Skeleton className="h-3.5 w-11/12" />
+        <Skeleton className="h-3.5 w-4/5" />
+        <Skeleton className="h-3.5 w-2/3" />
+      </div>
+    );
+  }
+  if (!text) return <p className="text-sm text-fg-subtle">{emptyHint}</p>;
+  return <AiOutput text={text} />;
+};
+
 export const ResumeCenter = () => {
-  const [profile, setProfile] = useState(null);
-  const resumeFileRef = useRef(null); // keep file in ref so it persists without re-render issues
-  const [resumeReady, setResumeReady] = useState(false);
-  const [uploading, setUploading] = useState({ resume: false, photo: false, cert: false });
-  const [aiLoading, setAiLoading] = useState({ analysis: false, gaps: false, questions: false, roadmap: false });
-  const [aiData, setAiData] = useState({});
+  const { data: profile } = useFetch(() => profileApi.getProfile().then((res) => res.data.profile ?? null));
+
+  // Uploaded URLs are tracked locally so the UI updates immediately, whether or not
+  // the backend also writes them to the profile.
+  const [uploads, setUploads] = useState({ resume: null, photo: null, certificates: [] });
+  const [uploading, setUploading] = useState(null);
+
+  const [tool, setTool] = useState('analysis');
+  const [resumeFile, setResumeFile] = useState(null);
   const [targetRole, setTargetRole] = useState('');
   const [interviewRole, setInterviewRole] = useState('');
+  const [results, setResults] = useState({});
+  const [running, setRunning] = useState(null);
+  const analysisInput = useRef(null);
 
-  useEffect(() => {
-    profileApi.getProfile()
-      .then(({ data }) => setProfile(data.profile))
-      .catch(() => {});
-  }, []);
+  const resumeUrl = uploads.resume || profile?.resume || null;
+  const photoUrl = uploads.photo || profile?.profilePhoto || null;
+  const certificates = [...new Set([...(profile?.certificates ?? []), ...uploads.certificates])];
 
-  const handleUpload = async (type, file) => {
-    if (!file) return;
-    setUploading(u => ({ ...u, [type]: true }));
+  const upload = async (kind, file) => {
+    setUploading(kind);
     try {
-      if (type === 'resume') {
+      if (kind === 'resume') {
         const res = await uploadApi.uploadResume(file);
-        // Keep file reference for AI analysis in the same session
-        resumeFileRef.current = file;
-        setResumeReady(true);
-        setProfile(p => ({ ...(p || {}), resume: res.data.url }));
-        toast.success('Resume uploaded! You can now run AI analysis.');
-      } else if (type === 'photo') {
+        setUploads((u) => ({ ...u, resume: res.data.url }));
+        if (file.type === PDF) setResumeFile(file); // ready to analyze without picking it again
+        toast.success('Resume uploaded');
+      } else if (kind === 'photo') {
         const res = await uploadApi.uploadPhoto(file);
-        setProfile(p => ({ ...(p || {}), profilePhoto: res.data.url }));
-        toast.success('Photo uploaded!');
+        setUploads((u) => ({ ...u, photo: res.data.url }));
+        toast.success('Profile photo uploaded');
       } else {
         const res = await uploadApi.uploadCertificate(file);
-        setProfile(p => ({ ...(p || {}), certificates: [...(p?.certificates || []), res.data.url] }));
-        toast.success('Certificate uploaded!');
+        setUploads((u) => ({ ...u, certificates: [...u.certificates, res.data.url] }));
+        toast.success('Certificate uploaded');
       }
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Upload failed');
+      toast.error(errorMessage(err, 'Upload failed'));
+    } finally {
+      setUploading(null);
     }
-    setUploading(u => ({ ...u, [type]: false }));
   };
 
-  const runAnalysis = async () => {
-    // Check if file is in memory (same session)
-    if (!resumeFileRef.current) {
-      if (profile?.resume) {
-        toast.error('Please re-upload your resume to run AI analysis (file not in memory)');
-      } else {
-        toast.error('Please upload your resume first');
-      }
-      return;
-    }
-    setAiLoading(l => ({ ...l, analysis: true }));
+  const run = async (key, request, pick) => {
+    setRunning(key);
     try {
-      const { data } = await aiApi.analyzeResume(resumeFileRef.current);
-      setAiData(d => ({ ...d, analysis: data.analysis }));
-      toast.success('Resume analyzed!');
+      const { data } = await request();
+      setResults((r) => ({ ...r, [key]: pick(data) }));
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Analysis failed');
+      toast.error(errorMessage(err, 'The AI request failed. Please try again.'));
+    } finally {
+      setRunning(null);
     }
-    setAiLoading(l => ({ ...l, analysis: false }));
   };
 
-  const runSkillGap = async () => {
-    if (!targetRole.trim()) { toast.error('Enter your target role first'); return; }
-    setAiLoading(l => ({ ...l, gaps: true }));
-    try {
-      const { data } = await aiApi.getSkillGap(targetRole);
-      setAiData(d => ({ ...d, gaps: data.analysis }));
-    } catch (err) {
-      toast.error(err.response?.data?.message || 'Skill gap analysis failed');
-    }
-    setAiLoading(l => ({ ...l, gaps: false }));
+  const onPickAnalysisFile = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const problem = validateFile(file, [PDF]);
+    if (problem) return toast.error(problem === 'That file type is not supported.' ? 'Resume analysis needs a PDF file.' : problem);
+    setResumeFile(file);
   };
 
-  const runInterviewQ = async () => {
-    if (!interviewRole.trim()) { toast.error('Enter the role for interview questions'); return; }
-    setAiLoading(l => ({ ...l, questions: true }));
-    try {
-      const { data } = await aiApi.getInterviewQuestions(interviewRole);
-      setAiData(d => ({ ...d, questions: data.questions }));
-    } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to generate questions');
-    }
-    setAiLoading(l => ({ ...l, questions: false }));
+  const requireText = (value, message) => {
+    if (value.trim()) return true;
+    toast.error(message);
+    return false;
   };
-
-  const runRoadmap = async () => {
-    if (!targetRole.trim()) { toast.error('Enter your target role first'); return; }
-    setAiLoading(l => ({ ...l, roadmap: true }));
-    try {
-      const { data } = await aiApi.getLearningRoadmap(targetRole);
-      setAiData(d => ({ ...d, roadmap: data.roadmap }));
-    } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to generate roadmap');
-    }
-    setAiLoading(l => ({ ...l, roadmap: false }));
-  };
-
-  const canAnalyze = resumeReady || !!resumeFileRef.current;
 
   return (
-    <div className="space-y-6">
-      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
-        <h1 className="text-2xl font-bold text-white">Resume Center</h1>
-        <p className="text-white/40 text-sm mt-1">Upload documents · Get AI-powered career insights</p>
-      </motion.div>
+    <>
+      <PageHeader title="Resume & AI tools" description="Store your documents and get AI-assisted feedback to prepare for applications." />
 
-      {/* Uploads */}
-      <div className="glass rounded-2xl p-6 border border-white/6">
-        <h3 className="font-semibold text-white mb-5">Document Uploads</h3>
-        <div className="grid md:grid-cols-3 gap-4">
-          <UploadZone label="Resume / CV (PDF only)" icon={FileText} accept=".pdf"
-            onUpload={f => handleUpload('resume', f)}
-            uploaded={!!profile?.resume} uploading={uploading.resume} />
-          <UploadZone label="Profile Photo" icon={Image} accept="image/*"
-            onUpload={f => handleUpload('photo', f)}
-            uploaded={!!profile?.profilePhoto} uploading={uploading.photo} />
-          <UploadZone label="Certificate" icon={Award} accept=".pdf,image/*"
-            onUpload={f => handleUpload('cert', f)}
-            uploaded={(profile?.certificates?.length || 0) > 0} uploading={uploading.cert} />
+      <section aria-labelledby="documents-heading">
+        <h2 id="documents-heading" className="mb-3 text-sm font-semibold text-fg">Documents</h2>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <UploadCard
+            icon={FileText}
+            title="Resume"
+            description="PDF, up to 5 MB."
+            accept="application/pdf"
+            allowed={[PDF]}
+            busy={uploading === 'resume'}
+            done={Boolean(resumeUrl)}
+            onUpload={(f) => upload('resume', f)}
+          >
+            {resumeUrl ? <UploadedLink href={resumeUrl} label="Resume uploaded" /> : <span className="text-fg-subtle">Not uploaded yet</span>}
+          </UploadCard>
+
+          <UploadCard
+            icon={ImageIcon}
+            title="Profile photo"
+            description="PNG or JPEG, up to 5 MB."
+            accept="image/png,image/jpeg"
+            allowed={IMAGE_TYPES}
+            busy={uploading === 'photo'}
+            done={Boolean(photoUrl)}
+            onUpload={(f) => upload('photo', f)}
+          >
+            {photoUrl ? (
+              <div className="flex items-center gap-3">
+                <img src={photoUrl} alt="Your profile" className="h-10 w-10 rounded-full border border-line object-cover" />
+                <UploadedLink href={photoUrl} label="Photo uploaded" />
+              </div>
+            ) : (
+              <span className="text-fg-subtle">Not uploaded yet</span>
+            )}
+          </UploadCard>
+
+          <UploadCard
+            icon={Award}
+            title="Certificates"
+            description="PDF, PNG or JPEG, up to 5 MB each."
+            accept="application/pdf,image/png,image/jpeg"
+            allowed={[PDF, ...IMAGE_TYPES]}
+            busy={uploading === 'cert'}
+            done={certificates.length > 0}
+            onUpload={(f) => upload('cert', f)}
+          >
+            {certificates.length > 0 ? (
+              <ul className="space-y-1">
+                {certificates.map((href, i) => (
+                  <li key={href}><UploadedLink href={href} label={`Certificate ${i + 1}`} /></li>
+                ))}
+              </ul>
+            ) : (
+              <span className="text-fg-subtle">None uploaded yet</span>
+            )}
+          </UploadCard>
         </div>
+      </section>
 
-        {/* Status bar */}
-        <div className="mt-4 space-y-2">
-          {profile?.resume && (
-            <div className="flex items-center gap-3 p-3 rounded-xl bg-green-500/8 border border-green-500/20">
-              <CheckCircle2 size={15} className="text-green-400 shrink-0" />
-              <span className="text-sm text-green-300 flex-1">Resume saved to your profile</span>
-              <a href={profile.resume} target="_blank" rel="noreferrer"
-                className="flex items-center gap-1 text-xs text-white/40 hover:text-white transition-colors shrink-0">
-                <Eye size={12} /> View
-              </a>
+      <Card className="mt-8">
+        <CardHeader title="AI assistant" description="Results are generated by a language model and may contain mistakes. Use them as guidance." />
+        <Tabs tabs={TOOLS} value={tool} onChange={setTool} label="AI tools" withPanels className="px-3" />
+
+        <CardBody>
+          {tool === 'analysis' && (
+            <div role="tabpanel" id="panel-analysis" aria-labelledby="tab-analysis" className="space-y-5">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <div className="flex min-w-0 flex-1 items-center gap-3 rounded-lg border border-dashed border-line-strong px-4 py-3">
+                  <FileText size={18} aria-hidden="true" className="shrink-0 text-fg-subtle" />
+                  <p className="min-w-0 flex-1 truncate text-sm text-fg-muted">
+                    {resumeFile ? <span className="font-medium text-fg">{resumeFile.name}</span> : 'Choose a PDF resume to analyze'}
+                  </p>
+                  <Button variant="secondary" size="sm" onClick={() => analysisInput.current?.click()}>
+                    {resumeFile ? 'Change' : 'Choose PDF'}
+                  </Button>
+                  <input ref={analysisInput} type="file" accept="application/pdf" onChange={onPickAnalysisFile} className="sr-only" tabIndex={-1} aria-label="Choose a PDF resume to analyze" />
+                </div>
+                <Button
+                  loading={running === 'analysis'}
+                  onClick={() => {
+                    if (!resumeFile) return toast.error('Choose a PDF resume first');
+                    run('analysis', () => aiApi.analyzeResume(resumeFile), (d) => d.analysis);
+                  }}
+                >
+                  Analyze resume
+                </Button>
+              </div>
+              <ResultArea busy={running === 'analysis'} text={results.analysis} emptyHint="Your ATS-style score, detected skills, gaps and suggestions will appear here." />
             </div>
           )}
-          {profile?.resume && !canAnalyze && (
-            <div className="flex items-center gap-3 p-3 rounded-xl bg-yellow-500/8 border border-yellow-500/20">
-              <AlertCircle size={15} className="text-yellow-400 shrink-0" />
-              <span className="text-sm text-yellow-300 flex-1">
-                To run AI analysis, re-upload your resume above (file must be in current session)
-              </span>
+
+          {tool === 'gaps' && (
+            <div role="tabpanel" id="panel-gaps" aria-labelledby="tab-gaps" className="space-y-5">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                <div className="flex-1">
+                  <Input label="Target role" placeholder="e.g. Full-stack developer" value={targetRole} onChange={(e) => setTargetRole(e.target.value)} hint="Compared against the skills on your Skills page." />
+                </div>
+                <Button
+                  loading={running === 'gaps'}
+                  onClick={() => requireText(targetRole, 'Enter a target role first') && run('gaps', () => aiApi.getSkillGap(targetRole.trim()), (d) => d.analysis)}
+                >
+                  Analyze skill gap
+                </Button>
+              </div>
+              <ResultArea busy={running === 'gaps'} text={results.gaps} emptyHint="Missing skills, weak areas and learning suggestions will appear here." />
             </div>
           )}
-          {canAnalyze && (
-            <div className="flex items-center gap-3 p-3 rounded-xl bg-indigo-500/8 border border-indigo-500/20">
-              <Brain size={15} className="text-indigo-400 shrink-0" />
-              <span className="text-sm text-indigo-300">Resume ready for AI analysis ✓</span>
+
+          {tool === 'questions' && (
+            <div role="tabpanel" id="panel-questions" aria-labelledby="tab-questions" className="space-y-5">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                <div className="flex-1">
+                  <Input label="Role you're interviewing for" placeholder="e.g. React developer" value={interviewRole} onChange={(e) => setInterviewRole(e.target.value)} hint="Questions use your skills and projects." />
+                </div>
+                <Button
+                  loading={running === 'questions'}
+                  onClick={() => requireText(interviewRole, 'Enter a role first') && run('questions', () => aiApi.getInterviewQuestions(interviewRole.trim()), (d) => d.questions)}
+                >
+                  Generate questions
+                </Button>
+              </div>
+              <ResultArea busy={running === 'questions'} text={results.questions} emptyHint="Technical, project-based and HR questions will appear here." />
             </div>
           )}
-        </div>
-      </div>
 
-      {/* AI Tools */}
-      <div className="glass rounded-2xl p-6 border border-white/6">
-        <h3 className="font-semibold text-white mb-5">AI Tools</h3>
-        <div className="space-y-4">
-          {/* Row 1: Analyze resume */}
-          <div className="flex items-center gap-4 p-4 rounded-xl bg-white/2 border border-white/6">
-            <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center shrink-0">
-              <Brain size={18} className="text-indigo-400" />
+          {tool === 'roadmap' && (
+            <div role="tabpanel" id="panel-roadmap" aria-labelledby="tab-roadmap" className="space-y-5">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                <div className="flex-1">
+                  <Input label="Target role" placeholder="e.g. Backend developer" value={targetRole} onChange={(e) => setTargetRole(e.target.value)} hint="Builds a plan from the skills on your Skills page." />
+                </div>
+                <Button
+                  loading={running === 'roadmap'}
+                  onClick={() => requireText(targetRole, 'Enter a target role first') && run('roadmap', () => aiApi.getLearningRoadmap(targetRole.trim()), (d) => d.roadmap)}
+                >
+                  Generate roadmap
+                </Button>
+              </div>
+              <ResultArea busy={running === 'roadmap'} text={results.roadmap} emptyHint="A week-by-week learning plan will appear here." />
             </div>
-            <div className="flex-1">
-              <div className="text-sm font-medium text-white">Resume Analysis</div>
-              <div className="text-xs text-white/40">ATS score, skills found, improvement tips</div>
-            </div>
-            <Button onClick={runAnalysis} loading={aiLoading.analysis}
-              disabled={!canAnalyze} size="sm"
-              className={!canAnalyze ? 'opacity-50 cursor-not-allowed' : ''}>
-              {canAnalyze ? 'Analyze' : 'Upload PDF first'}
-            </Button>
-          </div>
-
-          {/* Row 2: Skill gap + Roadmap */}
-          <div className="flex items-center gap-4 p-4 rounded-xl bg-white/2 border border-white/6">
-            <div className="w-10 h-10 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center shrink-0">
-              <Target size={18} className="text-cyan-400" />
-            </div>
-            <div className="flex-1">
-              <div className="text-sm font-medium text-white mb-2">Skill Gap & Learning Roadmap</div>
-              <input value={targetRole} onChange={e => setTargetRole(e.target.value)}
-                placeholder="Enter target role (e.g. Full Stack Developer)"
-                className="input-field text-sm w-full" />
-            </div>
-            <div className="flex flex-col gap-2 shrink-0">
-              <Button onClick={runSkillGap} loading={aiLoading.gaps} size="sm" variant="secondary">
-                Skill Gap
-              </Button>
-              <Button onClick={runRoadmap} loading={aiLoading.roadmap} size="sm" variant="secondary">
-                Roadmap
-              </Button>
-            </div>
-          </div>
-
-          {/* Row 3: Interview questions */}
-          <div className="flex items-center gap-4 p-4 rounded-xl bg-white/2 border border-white/6">
-            <div className="w-10 h-10 rounded-xl bg-yellow-500/10 border border-yellow-500/20 flex items-center justify-center shrink-0">
-              <AlertCircle size={18} className="text-yellow-400" />
-            </div>
-            <div className="flex-1">
-              <div className="text-sm font-medium text-white mb-2">Interview Questions</div>
-              <input value={interviewRole} onChange={e => setInterviewRole(e.target.value)}
-                placeholder="Enter role (e.g. React Developer, Data Analyst)"
-                className="input-field text-sm w-full" />
-            </div>
-            <Button onClick={runInterviewQ} loading={aiLoading.questions} size="sm" className="shrink-0">
-              Generate
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      {/* AI Results Grid */}
-      {Object.values(aiData).some(Boolean) || Object.values(aiLoading).some(Boolean) ? (
-        <div className="grid md:grid-cols-2 gap-5">
-          <AIResult title="Resume Analysis" icon={Brain} content={aiData.analysis} loading={aiLoading.analysis} color="indigo" />
-          <AIResult title="Skill Gap Analysis" icon={Target} content={aiData.gaps} loading={aiLoading.gaps} color="cyan" />
-          <AIResult title="Interview Questions" icon={AlertCircle} content={aiData.questions} loading={aiLoading.questions} color="yellow" />
-          <AIResult title="Learning Roadmap" icon={Map} content={aiData.roadmap} loading={aiLoading.roadmap} color="green" />
-        </div>
-      ) : null}
-    </div>
+          )}
+        </CardBody>
+      </Card>
+    </>
   );
 };

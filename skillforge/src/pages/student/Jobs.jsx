@@ -1,136 +1,129 @@
-import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { Briefcase, MapPin, Clock, Filter, Building2, ChevronDown } from 'lucide-react';
+import { useState } from 'react';
+import { Briefcase, Check, MapPin, Wallet } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { useAuthStore } from '../../store/authStore';
+import { useFetch } from '../../hooks/useFetch';
+import { usePagination } from '../../hooks/usePagination';
 import { jobApi } from '../../api/jobApi';
 import { applicationApi } from '../../api/applicationApi';
+import { PageHeader } from '../../components/ui/PageHeader';
+import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
+import { Badge } from '../../components/ui/Badge';
 import { SearchBar } from '../../components/ui/SearchBar';
+import { Pagination } from '../../components/ui/Pagination';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { ErrorState } from '../../components/ui/ErrorState';
 import { CardSkeleton } from '../../components/ui/Skeleton';
-import toast from 'react-hot-toast';
+import { errorMessage, formatDate, idOf, matchesQuery, plural } from '../../utils/format';
 
-const JobCard = ({ job, onApply, applying }) => (
-  <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }}
-    className="glass rounded-2xl p-5 border border-white/6 hover-card group">
-    <div className="flex items-start gap-4">
-      <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-500/20 to-cyan-500/10 border border-indigo-500/20 flex items-center justify-center shrink-0">
-        <Building2 size={20} className="text-indigo-400" />
-      </div>
-      <div className="flex-1 min-w-0">
-        <h3 className="font-semibold text-white group-hover:text-indigo-300 transition-colors">{job.title}</h3>
-        <p className="text-sm text-white/50 mt-0.5">{job.company}</p>
-        <div className="flex flex-wrap gap-3 mt-2 text-xs text-white/40">
-          <span className="flex items-center gap-1"><MapPin size={11} />{job.location}</span>
-          {job.salary && <span>💰 {job.salary}</span>}
-          <span className="flex items-center gap-1">
-            <Clock size={11} />{job.createdAt ? new Date(job.createdAt).toLocaleDateString() : 'Recent'}
-          </span>
-        </div>
-        {job.skillsRequired?.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mt-3">
-            {job.skillsRequired.slice(0, 5).map(s => (
-              <span key={s} className="px-2 py-0.5 rounded-md bg-white/5 border border-white/8 text-xs text-white/40">{s}</span>
-            ))}
+const PAGE_SIZE = 8;
+
+const JobCard = ({ job, applied, applying, onApply }) => (
+  <Card className="p-5">
+    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className="flex min-w-0 gap-4">
+        <span aria-hidden="true" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-subtle text-base font-semibold text-fg-muted">
+          {(job.company || '?')[0].toUpperCase()}
+        </span>
+        <div className="min-w-0">
+          <h2 className="font-semibold text-fg">{job.title}</h2>
+          <p className="text-sm text-fg-muted">{job.company}</p>
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-fg-muted">
+            <span className="inline-flex items-center gap-1.5"><MapPin size={14} aria-hidden="true" className="text-fg-subtle" />{job.location}</span>
+            {job.salary && <span className="inline-flex items-center gap-1.5"><Wallet size={14} aria-hidden="true" className="text-fg-subtle" />{job.salary}</span>}
+            <span className="text-fg-subtle">Posted {formatDate(job.createdAt)}</span>
           </div>
+        </div>
+      </div>
+      <div className="shrink-0">
+        {applied ? (
+          <Badge variant="success" className="gap-1 py-1.5 pl-2.5 pr-3 text-[13px]">
+            <Check size={14} aria-hidden="true" /> Applied
+          </Badge>
+        ) : (
+          <Button onClick={() => onApply(job._id)} loading={applying} className="w-full sm:w-auto">Apply</Button>
         )}
       </div>
     </div>
-    <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/6">
-      <span className="text-xs text-white/30">{job.applicants?.length || 0} applicants</span>
-      <Button onClick={() => onApply(job._id)} size="sm" loading={applying === job._id}>
-        Apply Now
-      </Button>
-    </div>
-  </motion.div>
+
+    {job.description && <p className="mt-4 line-clamp-2 text-sm leading-relaxed text-fg-muted">{job.description}</p>}
+
+    {job.skillsRequired?.length > 0 && (
+      <div className="mt-4 flex flex-wrap gap-1.5">
+        {job.skillsRequired.map((s) => <Badge key={s}>{s}</Badge>)}
+      </div>
+    )}
+  </Card>
 );
 
 export const StudentJobs = () => {
-  const [jobs, setJobs] = useState([]);
-  const [allJobs, setAllJobs] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [applying, setApplying] = useState(null);
+  const user = useAuthStore((s) => s.user);
+  const { data: jobs, loading, error, reload } = useFetch(() => jobApi.getJobs().then((res) => res.data.jobs ?? []));
   const [search, setSearch] = useState('');
-  const [showFilters, setShowFilters] = useState(false);
-  const [locationFilter, setLocationFilter] = useState('');
+  const [location, setLocation] = useState('');
+  const [applying, setApplying] = useState(null);
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      const { data } = await jobApi.getJobs();
-      const list = data.jobs || [];
-      setAllJobs(list);
-      setJobs(list);
-    } catch { toast.error('Failed to load jobs'); }
-    setLoading(false);
-  };
-  useEffect(() => { load(); }, []);
+  const filtered = (jobs ?? []).filter(
+    (j) =>
+      matchesQuery(search, j.title, j.company, (j.skillsRequired ?? []).join(' ')) &&
+      matchesQuery(location, j.location)
+  );
+  const pager = usePagination(filtered, PAGE_SIZE, `${search}|${location}`);
 
-  useEffect(() => {
-    let filtered = allJobs;
-    if (search) filtered = filtered.filter(j =>
-      j.title?.toLowerCase().includes(search.toLowerCase()) ||
-      j.company?.toLowerCase().includes(search.toLowerCase()) ||
-      j.skillsRequired?.some(s => s.toLowerCase().includes(search.toLowerCase()))
-    );
-    if (locationFilter) filtered = filtered.filter(j =>
-      j.location?.toLowerCase().includes(locationFilter.toLowerCase())
-    );
-    setJobs(filtered);
-  }, [search, locationFilter, allJobs]);
+  const apply = async (jobId) => {
+  setApplying(jobId);
 
-  const applyJob = async (jobId) => {
-    setApplying(jobId);
-    try {
-      // Step 1: Add student to job.applicants[]  (POST /jobs/apply/:id)
-      await jobApi.applyJob(jobId);
-      // Step 2: Create an Application document so it appears in /applications
-      await applicationApi.createApplication(jobId);
-      toast.success('Application submitted!');
-      load(); // refresh applicant counts
-    } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to apply');
-    }
+  try {
+    await applicationApi.createApplication(jobId);
+
+    toast.success('Application submitted');
+    reload();
+  } catch (err) {
+    toast.error(errorMessage(err, 'Could not submit your application'));
+  } finally {
     setApplying(null);
-  };
+  }
+};
+  const hasApplied = (job) => (job.applicants ?? []).some((a) => idOf(a) === user?._id);
+
+  let body;
+  if (loading) {
+    body = <div className="space-y-4">{Array.from({ length: 4 }).map((_, i) => <CardSkeleton key={i} />)}</div>;
+  } else if (error) {
+    body = <ErrorState title="Couldn't load jobs" onRetry={reload} />;
+  } else if (jobs.length === 0) {
+    body = <EmptyState icon={Briefcase} title="No jobs posted yet" description="New openings from recruiters will appear here. Check back soon." />;
+  } else {
+    body = (
+      <>
+        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_16rem]">
+          <SearchBar value={search} onChange={setSearch} placeholder="Search by title, company or skill…" />
+          <SearchBar value={location} onChange={setLocation} placeholder="Filter by location…" icon={MapPin} />
+        </div>
+        <p className="mb-3 text-sm text-fg-muted" aria-live="polite">{plural(filtered.length, 'job')}</p>
+        {filtered.length === 0 ? (
+          <EmptyState icon={Briefcase} title="No jobs match your filters" description="Try a different keyword or clear the location." />
+        ) : (
+          <>
+            <ul className="space-y-4">
+              {pager.pageItems.map((job) => (
+                <li key={job._id}>
+                  <JobCard job={job} applied={hasApplied(job)} applying={applying === job._id} onApply={apply} />
+                </li>
+              ))}
+            </ul>
+            <Pagination page={pager.page} totalPages={pager.totalPages} onPageChange={pager.setPage} total={pager.total} pageSize={pager.pageSize} />
+          </>
+        )}
+      </>
+    );
+  }
 
   return (
-    <div className="space-y-6">
-      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
-        <h1 className="text-2xl font-bold text-white">Browse Jobs</h1>
-        <p className="text-white/40 text-sm mt-1">{jobs.length} opportunities available</p>
-      </motion.div>
-
-      <div className="flex gap-3">
-        <div className="flex-1">
-          <SearchBar value={search} onChange={setSearch} placeholder="Search jobs, companies, skills..." />
-        </div>
-        <button onClick={() => setShowFilters(!showFilters)}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-medium transition-all ${showFilters ? 'bg-indigo-600 border-indigo-600 text-white' : 'glass border-white/8 text-white/60 hover:text-white'}`}>
-          <Filter size={14} /> Filters <ChevronDown size={14} className={showFilters ? 'rotate-180' : ''} />
-        </button>
-      </div>
-
-      {showFilters && (
-        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
-          className="glass rounded-xl p-4 border border-white/6 flex gap-4">
-          <input value={locationFilter} onChange={e => setLocationFilter(e.target.value)}
-            placeholder="Filter by location..." className="input-field flex-1 text-sm" />
-          <button onClick={() => { setLocationFilter(''); setSearch(''); }}
-            className="text-sm text-white/40 hover:text-white px-3">Clear</button>
-        </motion.div>
-      )}
-
-      {loading ? (
-        <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-5">
-          {[...Array(6)].map((_, i) => <CardSkeleton key={i} />)}
-        </div>
-      ) : jobs.length === 0 ? (
-        <EmptyState icon={Briefcase} title="No jobs found" description="Try adjusting your search or check back later." />
-      ) : (
-        <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-5">
-          {jobs.map(job => <JobCard key={job._id} job={job} onApply={applyJob} applying={applying} />)}
-        </div>
-      )}
-    </div>
+    <>
+      <PageHeader title="Browse jobs" description="Search open positions and apply in one click." />
+      {body}
+    </>
   );
 };

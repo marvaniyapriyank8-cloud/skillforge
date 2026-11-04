@@ -1,150 +1,205 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Briefcase, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useForm } from 'react-hook-form';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Pencil, Trash2, Briefcase, Users } from 'lucide-react';
-import { recruiterApi } from '../../api/recruiterApi';
-import { Input, Textarea, Select } from '../../components/ui/Input';
-import { Button } from '../../components/ui/Button';
-import { Modal } from '../../components/ui/Modal';
-import { EmptyState } from '../../components/ui/EmptyState';
-import { CardSkeleton } from '../../components/ui/Skeleton';
-import { useAuthStore } from '../../store/authStore';
 import toast from 'react-hot-toast';
+import { useRecruiterData } from '../../hooks/useRecruiterData';
+import { useConfirm } from '../../hooks/useConfirm';
+import { usePagination } from '../../hooks/usePagination';
+import { recruiterApi } from '../../api/recruiterApi';
+import { PageHeader } from '../../components/ui/PageHeader';
+import { Input, Textarea } from '../../components/ui/Input';
+import { Button, IconButton } from '../../components/ui/Button';
+import { Modal } from '../../components/ui/Modal';
+import { SearchBar } from '../../components/ui/SearchBar';
+import { Pagination } from '../../components/ui/Pagination';
+import { EmptyState } from '../../components/ui/EmptyState';
+import { ErrorState } from '../../components/ui/ErrorState';
+import { TableSkeleton } from '../../components/ui/Skeleton';
+import { Table, TableCard, Td, Th, Tr } from '../../components/ui/Table';
+import { errorMessage, formatDate, idOf, matchesQuery, plural } from '../../utils/format';
+
+const PAGE_SIZE = 10;
+const parseSkills = (text) => [...new Set(text.split(',').map((s) => s.trim()).filter(Boolean))];
 
 export const RecruiterJobs = () => {
-  const { user } = useAuthStore();
-  const [jobs, setJobs] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState(null);
-  const { register, handleSubmit, reset, formState: { errors } } = useForm();
+  const { data, loading, error, reload } = useRecruiterData();
+  const { confirm, dialog } = useConfirm();
+  const [search, setSearch] = useState('');
+  const [modal, setModal] = useState({ open: false, job: null });
 
-  const load = async () => {
-    try {
-      const { data } = await recruiterApi.getJobs();
-      // Filter to only this recruiter's jobs
-      const all = data.jobs || [];
-      const mine = all.filter(j => j.recruiter?._id === user?._id || j.recruiter === user?._id);
-      setJobs(mine);  // backend: { success, jobs }
-    } catch { toast.error('Failed to load jobs'); }
-    setLoading(false);
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors, isSubmitting },
+  } = useForm();
+
+  const jobs = data?.jobs ?? [];
+  const applications = data?.applications ?? [];
+  const filtered = jobs.filter((j) => matchesQuery(search, j.title, j.company, j.location));
+  const pager = usePagination(filtered, PAGE_SIZE, search);
+  const countFor = (job) => applications.filter((a) => idOf(a.job) === job._id).length;
+
+  const openAdd = () => {
+    reset({ title: '', company: '', location: '', salary: '', description: '', skills: '' });
+    setModal({ open: true, job: null });
   };
-  useEffect(() => { load(); }, []);
-
-  const openAdd = () => { setEditing(null); reset({}); setOpen(true); };
-  const openEdit = (j) => {
-    setEditing(j);
-    // Map skillsRequired array back to comma-separated string for the form
-    reset({ ...j, skillsRequired: j.skillsRequired?.join(', ') });
-    setOpen(true);
+  const openEdit = (job) => {
+    reset({
+      title: job.title,
+      company: job.company,
+      location: job.location,
+      salary: job.salary ?? '',
+      description: job.description,
+      skills: (job.skillsRequired ?? []).join(', '),
+    });
+    setModal({ open: true, job });
   };
+  const close = () => setModal((m) => ({ ...m, open: false }));
 
-  const onSubmit = async (data) => {
-    // Backend expects skillsRequired as array
+  const onSubmit = async (form) => {
+    // Send only the editable fields (never the populated recruiter/applicants objects).
     const payload = {
-      ...data,
-      skillsRequired: data.skillsRequired
-        ? data.skillsRequired.split(',').map(s => s.trim()).filter(Boolean)
-        : [],
+      title: form.title.trim(),
+      company: form.company.trim(),
+      location: form.location.trim(),
+      salary: form.salary.trim(),
+      description: form.description.trim(),
+      skillsRequired: parseSkills(form.skills),
     };
     try {
-      if (editing) {
-        await recruiterApi.updateJob(editing._id, payload);
-        toast.success('Job updated!');
+      if (modal.job) {
+        await recruiterApi.updateJob(modal.job._id, payload);
+        toast.success('Job updated');
       } else {
         await recruiterApi.createJob(payload);
-        toast.success('Job posted!');
+        toast.success('Job posted');
       }
-      setOpen(false);
-      load();
-    } catch (err) { toast.error(err.response?.data?.message || 'Failed to save'); }
+      close();
+      reload();
+    } catch (err) {
+      toast.error(errorMessage(err, 'Could not save the job'));
+    }
   };
 
-  const deleteJob = async (id) => {
-    if (!confirm('Delete this job?')) return;
-    try { await recruiterApi.deleteJob(id); toast.success('Job deleted'); load(); }
-    catch { toast.error('Delete failed'); }
+  const onDelete = async (job) => {
+    const count = countFor(job);
+    const ok = await confirm({
+      title: `Delete "${job.title}"?`,
+      description: count > 0
+        ? `This job and its ${plural(count, 'application')} will no longer be visible. This can't be undone.`
+        : "This job posting will be removed. This can't be undone.",
+      confirmLabel: 'Delete job',
+    });
+    if (!ok) return;
+    try {
+      await recruiterApi.deleteJob(job._id);
+      toast.success('Job deleted');
+      reload();
+    } catch (err) {
+      toast.error(errorMessage(err, 'Could not delete the job'));
+    }
   };
+
+  let body;
+  if (loading) {
+    body = <TableSkeleton />;
+  } else if (error) {
+    body = <ErrorState title="Couldn't load your jobs" onRetry={reload} />;
+  } else if (jobs.length === 0) {
+    body = (
+      <EmptyState
+        icon={Briefcase}
+        title="No jobs posted yet"
+        description="Create your first posting. Students will be able to find it and apply."
+        action={<Button onClick={openAdd}><Plus size={16} aria-hidden="true" /> Post a job</Button>}
+      />
+    );
+  } else {
+    body = (
+      <>
+        <SearchBar value={search} onChange={setSearch} placeholder="Search by title, company or location…" className="mb-4 sm:max-w-sm" />
+        {filtered.length === 0 ? (
+          <EmptyState icon={Briefcase} title="No matching jobs" description="Try a different search term." />
+        ) : (
+          <>
+            <TableCard>
+              <Table minWidth={760}>
+                <thead>
+                  <tr>
+                    <Th>Job</Th>
+                    <Th>Location</Th>
+                    <Th>Applicants</Th>
+                    <Th>Posted</Th>
+                    <Th><span className="sr-only">Actions</span></Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pager.pageItems.map((job) => {
+                    const count = countFor(job);
+                    return (
+                      <Tr key={job._id}>
+                        <Td>
+                          <p className="font-medium text-fg">{job.title}</p>
+                          <p className="text-fg-muted">{job.company}{job.salary ? ` · ${job.salary}` : ''}</p>
+                        </Td>
+                        <Td>{job.location}</Td>
+                        <Td>
+                          {count > 0 ? (
+                            <Link to={`/recruiter/applicants?job=${job._id}`} className="font-medium text-brand-fg hover:underline">
+                              {plural(count, 'applicant')}
+                            </Link>
+                          ) : (
+                            <span className="text-fg-subtle">None yet</span>
+                          )}
+                        </Td>
+                        <Td className="whitespace-nowrap">{formatDate(job.createdAt)}</Td>
+                        <Td>
+                          <div className="flex justify-end">
+                            <IconButton label={`Edit ${job.title}`} onClick={() => openEdit(job)}><Pencil size={15} aria-hidden="true" /></IconButton>
+                            <IconButton label={`Delete ${job.title}`} variant="danger" onClick={() => onDelete(job)}><Trash2 size={15} aria-hidden="true" /></IconButton>
+                          </div>
+                        </Td>
+                      </Tr>
+                    );
+                  })}
+                </tbody>
+              </Table>
+            </TableCard>
+            <Pagination page={pager.page} totalPages={pager.totalPages} onPageChange={pager.setPage} total={pager.total} pageSize={pager.pageSize} />
+          </>
+        )}
+      </>
+    );
+  }
 
   return (
-    <div className="space-y-6">
-      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-white">Manage Jobs</h1>
-          <p className="text-white/40 text-sm mt-1">{jobs.length} postings</p>
-        </div>
-        <Button onClick={openAdd}><Plus size={16} /> Post Job</Button>
-      </motion.div>
+    <>
+      <PageHeader
+        title="Manage jobs"
+        description="Create, edit and remove your job postings."
+        actions={<Button onClick={openAdd}><Plus size={16} aria-hidden="true" /> Post a job</Button>}
+      />
+      {body}
 
-      {loading ? (
-        <div className="space-y-4">{[...Array(3)].map((_, i) => <CardSkeleton key={i} />)}</div>
-      ) : jobs.length === 0 ? (
-        <EmptyState icon={Briefcase} title="No jobs posted yet" description="Create your first job posting."
-          action={<Button onClick={openAdd}><Plus size={16} /> Post First Job</Button>} />
-      ) : (
-        <AnimatePresence>
-          {jobs.map((job, i) => (
-            <motion.div key={job._id} initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, x: -20 }} transition={{ delay: i * 0.05 }}
-              className="glass rounded-2xl p-5 border border-white/6 hover-card group">
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex items-start gap-4">
-                  <div className="w-11 h-11 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center shrink-0">
-                    <Briefcase size={18} className="text-indigo-400" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold text-white">{job.title}</h3>
-                    <p className="text-sm text-white/40 mt-0.5">{job.company} • {job.location}</p>
-                    <p className="text-sm text-white/55 mt-2 line-clamp-2">{job.description}</p>
-                    {/* backend field: skillsRequired */}
-                    {job.skillsRequired?.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5 mt-3">
-                        {job.skillsRequired.slice(0, 4).map(s => (
-                          <span key={s} className="px-2 py-0.5 rounded-md bg-white/5 border border-white/8 text-xs text-white/40">{s}</span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div className="flex flex-col items-end gap-3 shrink-0">
-                  <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Button onClick={() => openEdit(job)} variant="secondary" size="sm"><Pencil size={12} /></Button>
-                    <Button onClick={() => deleteJob(job._id)} variant="danger" size="sm"><Trash2 size={12} /></Button>
-                  </div>
-                  <div className="flex items-center gap-1.5 text-sm text-white/50">
-                    <Users size={13} />{job.applicants?.length || 0} applicants
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          ))}
-        </AnimatePresence>
-      )}
-
-      <Modal isOpen={open} onClose={() => setOpen(false)} title={editing ? 'Edit Job' : 'Post New Job'} size="lg">
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <Input label="Job Title" placeholder="e.g. Frontend Engineer" error={errors.title?.message}
-              {...register('title', { required: 'Title required' })} />
-            <Input label="Company" placeholder="e.g. Acme Corp" error={errors.company?.message}
-              {...register('company', { required: 'Company required' })} />
+      <Modal isOpen={modal.open} onClose={close} title={modal.job ? 'Edit job' : 'Post a job'} size="lg">
+        <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Input label="Job title" placeholder="e.g. Frontend developer" error={errors.title?.message} {...register('title', { required: 'Enter a job title' })} />
+            <Input label="Company" placeholder="Company name" error={errors.company?.message} {...register('company', { required: 'Enter the company name' })} />
+            <Input label="Location" placeholder="City, or Remote" error={errors.location?.message} {...register('location', { required: 'Enter a location' })} />
+            <Input label="Salary" placeholder="e.g. ₹6–9 LPA" optional {...register('salary')} />
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <Input label="Location" placeholder="Mumbai / Remote" error={errors.location?.message}
-              {...register('location', { required: 'Location required' })} />
-            <Input label="Salary (optional)" placeholder="e.g. ₹8-12 LPA" {...register('salary')} />
-          </div>
-          <Textarea label="Job Description" placeholder="Describe the role..." error={errors.description?.message}
-            {...register('description', { required: 'Description required' })} rows={4} />
-          {/* Backend field: skillsRequired */}
-          <Input label="Skills Required (comma-separated)" placeholder="React, Node.js, MongoDB"
-            {...register('skillsRequired')} />
-          <div className="flex gap-3 pt-2">
-            <Button type="button" variant="secondary" onClick={() => setOpen(false)} className="flex-1">Cancel</Button>
-            <Button type="submit" className="flex-1">{editing ? 'Update' : 'Post'} Job</Button>
+          <Textarea label="Description" rows={5} placeholder="Responsibilities, requirements and anything candidates should know." error={errors.description?.message} {...register('description', { required: 'Enter a description' })} />
+          <Input label="Required skills" placeholder="React, Node.js, MongoDB" optional hint="Separate skills with commas." {...register('skills')} />
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="secondary" onClick={close}>Cancel</Button>
+            <Button type="submit" loading={isSubmitting}>{modal.job ? 'Save changes' : 'Post job'}</Button>
           </div>
         </form>
       </Modal>
-    </div>
+      {dialog}
+    </>
   );
 };

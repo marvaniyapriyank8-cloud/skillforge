@@ -1,137 +1,179 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Pencil, Trash2, Code } from 'lucide-react';
-import { skillApi } from '../../api/skillApi';
-import { Input, Select } from '../../components/ui/Input';
-import { Button } from '../../components/ui/Button';
-import { Modal } from '../../components/ui/Modal';
-import { EmptyState } from '../../components/ui/EmptyState';
-import { SearchBar } from '../../components/ui/SearchBar';
-import { CardSkeleton } from '../../components/ui/Skeleton';
+import { Code2, Pencil, Plus, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { useFetch } from '../../hooks/useFetch';
+import { useConfirm } from '../../hooks/useConfirm';
+import { skillApi } from '../../api/skillApi';
+import { PageHeader } from '../../components/ui/PageHeader';
+import { Card } from '../../components/ui/Card';
+import { Input, Select } from '../../components/ui/Input';
+import { Button, IconButton } from '../../components/ui/Button';
+import { Modal } from '../../components/ui/Modal';
+import { SearchBar } from '../../components/ui/SearchBar';
+import { EmptyState } from '../../components/ui/EmptyState';
+import { ErrorState } from '../../components/ui/ErrorState';
+import { CardSkeleton } from '../../components/ui/Skeleton';
+import { errorMessage, matchesQuery, plural } from '../../utils/format';
+import { SKILL_LEVELS } from '../../utils/ui';
+import { cn } from '../../utils/cn';
 
-// Backend enum: Beginner | Intermediate | Advanced
-const LEVELS = ['Beginner', 'Intermediate', 'Advanced'];
-const levelPct = { Beginner: 33, Intermediate: 66, Advanced: 100 };
-const COLORS = [
-  'from-indigo-500/20 to-indigo-600/10 border-indigo-500/20',
-  'from-cyan-500/20 to-cyan-600/10 border-cyan-500/20',
-  'from-green-500/20 to-green-600/10 border-green-500/20',
-  'from-pink-500/20 to-pink-600/10 border-pink-500/20',
-  'from-yellow-500/20 to-yellow-600/10 border-yellow-500/20',
-  'from-purple-500/20 to-purple-600/10 border-purple-500/20',
-];
+/** Three-step meter: Beginner = 1, Intermediate = 2, Advanced = 3. */
+const LevelMeter = ({ level }) => {
+  const filled = SKILL_LEVELS.indexOf(level) + 1;
+  return (
+    <div className="flex items-center gap-2" role="img" aria-label={`Level: ${level}`}>
+      <div className="flex gap-1">
+        {SKILL_LEVELS.map((l, i) => (
+          <span key={l} className={cn('h-1.5 w-7 rounded-full', i < filled ? 'bg-brand' : 'bg-subtle')} />
+        ))}
+      </div>
+      <span className="text-xs text-fg-muted">{level}</span>
+    </div>
+  );
+};
 
 export const StudentSkills = () => {
-  const [skills, setSkills] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState(null);
+  const { data: skills, loading, error, reload } = useFetch(() =>
+    skillApi.getSkills().then((res) => res.data.skills ?? [])
+  );
+  const { confirm, dialog } = useConfirm();
   const [search, setSearch] = useState('');
-  const { register, handleSubmit, reset, formState: { errors } } = useForm();
+  const [level, setLevel] = useState('');
+  const [modal, setModal] = useState({ open: false, skill: null });
 
-  const load = async () => {
-    try {
-      const { data } = await skillApi.getSkills();
-      setSkills(data.skills || []);   // backend: { success, skills: [] }
-    } catch { toast.error('Failed to load skills'); }
-    setLoading(false);
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors, isSubmitting },
+  } = useForm();
+
+  const openAdd = () => {
+    reset({ name: '', level: 'Beginner' });
+    setModal({ open: true, skill: null });
   };
-  useEffect(() => { load(); }, []);
+  const openEdit = (skill) => {
+    reset({ name: skill.name, level: skill.level });
+    setModal({ open: true, skill });
+  };
+  const close = () => setModal((m) => ({ ...m, open: false }));
 
-  const openAdd = () => { setEditing(null); reset({ name: '', level: 'Beginner' }); setOpen(true); };
-  const openEdit = (s) => { setEditing(s); reset({ name: s.name, level: s.level }); setOpen(true); };
-
-  const onSubmit = async (data) => {
+  const onSubmit = async (form) => {
+    const payload = { name: form.name.trim(), level: form.level };
     try {
-      if (editing) {
-        await skillApi.updateSkill(editing._id, data);
-        toast.success('Skill updated!');
+      if (modal.skill) {
+        await skillApi.updateSkill(modal.skill._id, payload);
+        toast.success('Skill updated');
       } else {
-        await skillApi.addSkill(data);  // backend: POST /skills with { name, level }
-        toast.success('Skill added!');
+        await skillApi.addSkill(payload);
+        toast.success('Skill added');
       }
-      setOpen(false);
-      load();
+      close();
+      reload();
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to save skill');
+      toast.error(errorMessage(err, 'Could not save the skill'));
     }
   };
 
-  const deleteSkill = async (id) => {
-    if (!confirm('Delete this skill?')) return;
+  const onDelete = async (skill) => {
+    const ok = await confirm({
+      title: `Remove "${skill.name}"?`,
+      description: 'This skill will be removed from your profile.',
+      confirmLabel: 'Remove',
+    });
+    if (!ok) return;
     try {
-      await skillApi.deleteSkill(id);
+      await skillApi.deleteSkill(skill._id);
       toast.success('Skill removed');
-      load();
-    } catch { toast.error('Failed to delete'); }
+      reload();
+    } catch (err) {
+      toast.error(errorMessage(err, 'Could not remove the skill'));
+    }
   };
 
-  const filtered = skills.filter(s => s.name?.toLowerCase().includes(search.toLowerCase()));
+  const header = (
+    <PageHeader
+      title="Skills"
+      description={skills ? `${plural(skills.length, 'skill')} on your profile.` : 'The skills on your profile.'}
+      actions={<Button onClick={openAdd}><Plus size={16} aria-hidden="true" /> Add skill</Button>}
+    />
+  );
+
+  let body;
+  if (loading) {
+    body = <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">{Array.from({ length: 6 }).map((_, i) => <CardSkeleton key={i} />)}</div>;
+  } else if (error) {
+    body = <ErrorState title="Couldn't load your skills" onRetry={reload} />;
+  } else if (skills.length === 0) {
+    body = (
+      <EmptyState
+        icon={Code2}
+        title="No skills yet"
+        description="Add the languages, frameworks and tools you know. They're also used by the AI skill-gap tool."
+        action={<Button onClick={openAdd}><Plus size={16} aria-hidden="true" /> Add your first skill</Button>}
+      />
+    );
+  } else {
+    const filtered = skills.filter((s) => matchesQuery(search, s.name) && (!level || s.level === level));
+    body = (
+      <>
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row">
+          <SearchBar value={search} onChange={setSearch} placeholder="Search skills…" className="sm:max-w-xs sm:flex-1" />
+          <div className="sm:w-48">
+            <Select aria-label="Filter by level" value={level} onChange={(e) => setLevel(e.target.value)}>
+              <option value="">All levels</option>
+              {SKILL_LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
+            </Select>
+          </div>
+        </div>
+        {filtered.length === 0 ? (
+          <EmptyState icon={Code2} title="No matching skills" description="Try a different search or level." />
+        ) : (
+          <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {filtered.map((skill) => (
+              <li key={skill._id}>
+                <Card className="flex items-start justify-between gap-3 p-4">
+                  <div className="min-w-0">
+                    <p className="truncate font-medium text-fg">{skill.name}</p>
+                    <div className="mt-2.5"><LevelMeter level={skill.level} /></div>
+                  </div>
+                  <div className="-mr-1 -mt-1 flex shrink-0">
+                    <IconButton label={`Edit ${skill.name}`} onClick={() => openEdit(skill)}><Pencil size={15} aria-hidden="true" /></IconButton>
+                    <IconButton label={`Remove ${skill.name}`} variant="danger" onClick={() => onDelete(skill)}><Trash2 size={15} aria-hidden="true" /></IconButton>
+                  </div>
+                </Card>
+              </li>
+            ))}
+          </ul>
+        )}
+      </>
+    );
+  }
 
   return (
-    <div className="space-y-6">
-      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-white">My Skills</h1>
-          <p className="text-white/40 text-sm mt-1">{skills.length} skills added</p>
-        </div>
-        <Button onClick={openAdd}><Plus size={16} /> Add Skill</Button>
-      </motion.div>
+    <>
+      {header}
+      {body}
 
-      <SearchBar value={search} onChange={setSearch} placeholder="Search skills..." />
-
-      {loading ? (
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">{[...Array(6)].map((_, i) => <CardSkeleton key={i} />)}</div>
-      ) : filtered.length === 0 ? (
-        <EmptyState icon={Code} title="No skills yet" description="Add your first skill to stand out to recruiters."
-          action={<Button onClick={openAdd}><Plus size={16} /> Add first skill</Button>} />
-      ) : (
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          <AnimatePresence>
-            {filtered.map((skill, i) => (
-              <motion.div key={skill._id} initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.9 }} transition={{ delay: i * 0.04 }}
-                className={`glass rounded-2xl p-5 border bg-gradient-to-br ${COLORS[i % COLORS.length]} hover-card group`}>
-                <div className="flex items-start justify-between mb-3">
-                  <div>
-                    <div className="font-semibold text-white">{skill.name}</div>
-                    <div className="text-xs text-white/40 mt-0.5">{skill.level}</div>
-                  </div>
-                  <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button onClick={() => openEdit(skill)} className="p-1.5 rounded-lg hover:bg-white/10 text-white/50 hover:text-white">
-                      <Pencil size={12} />
-                    </button>
-                    <button onClick={() => deleteSkill(skill._id)} className="p-1.5 rounded-lg hover:bg-red-500/20 text-white/50 hover:text-red-400">
-                      <Trash2 size={12} />
-                    </button>
-                  </div>
-                </div>
-                <div className="progress-bar">
-                  <motion.div initial={{ width: 0 }} animate={{ width: `${levelPct[skill.level] || 50}%` }}
-                    transition={{ duration: 0.8, delay: i * 0.05 }} className="progress-fill" />
-                </div>
-                <div className="text-xs text-white/30 mt-1.5">{levelPct[skill.level] || 50}% proficiency</div>
-              </motion.div>
-            ))}
-          </AnimatePresence>
-        </div>
-      )}
-
-      <Modal isOpen={open} onClose={() => setOpen(false)} title={editing ? 'Edit Skill' : 'Add Skill'}>
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-          <Input label="Skill Name" placeholder="e.g. React.js" error={errors.name?.message}
-            {...register('name', { required: 'Skill name is required' })} />
-          <Select label="Proficiency Level" {...register('level', { required: true })}>
-            {LEVELS.map(l => <option key={l} value={l}>{l}</option>)}
+      <Modal isOpen={modal.open} onClose={close} title={modal.skill ? 'Edit skill' : 'Add skill'} size="sm">
+        <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4">
+          <Input
+            label="Skill name"
+            placeholder="e.g. React"
+            error={errors.name?.message}
+            {...register('name', { required: 'Enter a skill name', validate: (v) => v.trim().length > 0 || 'Enter a skill name' })}
+          />
+          <Select label="Level" {...register('level', { required: true })}>
+            {SKILL_LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
           </Select>
-          <div className="flex gap-3 pt-2">
-            <Button type="button" variant="secondary" onClick={() => setOpen(false)} className="flex-1">Cancel</Button>
-            <Button type="submit" className="flex-1">{editing ? 'Update' : 'Add'} Skill</Button>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="secondary" onClick={close}>Cancel</Button>
+            <Button type="submit" loading={isSubmitting}>{modal.skill ? 'Save changes' : 'Add skill'}</Button>
           </div>
         </form>
       </Modal>
-    </div>
+      {dialog}
+    </>
   );
 };

@@ -1,178 +1,191 @@
-import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { motion } from 'framer-motion';
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { Code2, FolderGit2, Briefcase, FileText, TrendingUp, ArrowRight, Zap, Clock, Sparkles, Target } from 'lucide-react';
+import { ArrowRight, Briefcase, CircleCheck, ClipboardList, Circle, Code2, FolderGit2 } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
-import { StatCard } from '../../components/ui/Card';
-import { CardSkeleton } from '../../components/ui/Skeleton';
+import { useFetch } from '../../hooks/useFetch';
 import { skillApi } from '../../api/skillApi';
 import { projectApi } from '../../api/projectApi';
 import { applicationApi } from '../../api/applicationApi';
 import { jobApi } from '../../api/jobApi';
+import { profileApi } from '../../api/profileApi';
+import { PageHeader } from '../../components/ui/PageHeader';
+import { Card, CardBody, CardHeader, StatCard } from '../../components/ui/Card';
+import { StatusBadge } from '../../components/ui/Badge';
+import { EmptyState } from '../../components/ui/EmptyState';
+import { ErrorState } from '../../components/ui/ErrorState';
+import { Skeleton, StatSkeleton } from '../../components/ui/Skeleton';
+import { buttonStyles } from '../../components/ui/buttonStyles';
+import { firstName, formatDate } from '../../utils/format';
+import { isOwnApplication } from '../../utils/ownership';
+import { cn } from '../../utils/cn';
 
-const activityData = [
-  { day: 'Mon', views: 4 }, { day: 'Tue', views: 9 }, { day: 'Wed', views: 5 },
-  { day: 'Thu', views: 14 }, { day: 'Fri', views: 8 }, { day: 'Sat', views: 19 }, { day: 'Sun', views: 11 },
-];
-
-const CustomTooltip = ({ active, payload, label }) => {
-  if (active && payload?.length) return (
-    <div className="glass-strong rounded-xl px-3 py-2 border border-white/10 text-xs">
-      <div className="text-white/50 mb-0.5">{label}</div>
-      <div className="font-bold text-indigo-300">{payload[0].value} views</div>
-    </div>
-  );
-  return null;
+const loadDashboard = async (user) => {
+  const results = await Promise.allSettled([
+    skillApi.getSkills(),
+    projectApi.getProjects(),
+    applicationApi.getApplications(),
+    jobApi.getJobs(),
+    profileApi.getProfile(),
+  ]);
+  if (results.every((r) => r.status === 'rejected')) throw results[0].reason;
+  const [skills, projects, applications, jobs, profile] = results.map((r) => (r.status === 'fulfilled' ? r.value.data : null));
+  return {
+    skills: skills?.skills ?? [],
+    projects: projects?.projects ?? [],
+    applications: (applications?.applications ?? []).filter((a) => isOwnApplication(a, user)),
+    jobs: jobs?.jobs ?? [],
+    profile: profile?.profile ?? null,
+  };
 };
 
+const buildChecklist = ({ profile, skills, projects }) => [
+  { label: 'Write a short bio', done: Boolean(profile?.bio?.trim()), to: '/student/profile' },
+  { label: 'Add your college', done: Boolean(profile?.college?.trim()), to: '/student/profile' },
+  { label: 'Link your GitHub', done: Boolean(profile?.socialLinks?.github?.trim()), to: '/student/profile' },
+  { label: 'Add at least one skill', done: skills.length > 0, to: '/student/skills' },
+  { label: 'Add a project', done: projects.length > 0, to: '/student/projects' },
+  { label: 'Upload your resume', done: Boolean(profile?.resume), to: '/student/resume' },
+];
+
 export const StudentDashboard = () => {
-  const { user } = useAuthStore();
-  const [stats, setStats] = useState({ skills: 0, projects: 0, applications: 0 });
-  const [jobs, setJobs] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const user = useAuthStore((s) => s.user);
+  const { data, loading, error, reload } = useFetch(() => loadDashboard(user));
 
-  useEffect(() => {
-    Promise.allSettled([skillApi.getSkills(), projectApi.getProjects(), applicationApi.getApplications(), jobApi.getJobs()])
-      .then(([s, p, a, j]) => {
-        setStats({
-          skills: s.status === 'fulfilled' ? (s.value.data.skills?.length || 0) : 0,
-          projects: p.status === 'fulfilled' ? (p.value.data.projects?.length || 0) : 0,
-          applications: a.status === 'fulfilled' ? (a.value.data.applications?.length || 0) : 0,
-        });
-        if (j.status === 'fulfilled') setJobs(j.value.data.jobs?.slice(0, 4) || []);
-      })
-      .finally(() => setLoading(false));
-  }, []);
+  const header = (
+    <PageHeader
+      title={`Welcome back, ${firstName(user?.name)}`}
+      description="An overview of your profile and applications."
+      actions={<Link to="/student/jobs" className={buttonStyles({})}>Browse jobs</Link>}
+    />
+  );
 
-  const hour = new Date().getHours();
-  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  if (loading) {
+    return (
+      <>
+        {header}
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => <StatSkeleton key={i} />)}
+        </div>
+        <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
+          <Skeleton className="h-72 lg:col-span-2" />
+          <Skeleton className="h-72" />
+        </div>
+      </>
+    );
+  }
+  if (error) return <>{header}<ErrorState onRetry={reload} /></>;
+
+  const { skills, projects, applications, jobs, profile } = data;
+  const checklist = buildChecklist({ profile, skills, projects });
+  const doneCount = checklist.filter((c) => c.done).length;
+  const percent = Math.round((doneCount / checklist.length) * 100);
+  const recent = [...applications].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 5);
+  const latestJobs = [...jobs].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 4);
 
   return (
-    <div className="space-y-7">
-      {/* Header */}
-      <motion.div initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }}>
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="text-xs text-white/35 font-medium">{greeting}</span>
-            </div>
-            <h1 className="text-2xl font-bold text-white tracking-tight">
-              Hey, <span className="gradient-text">{user?.name?.split(' ')[0]}</span> 👋
-            </h1>
-            <p className="text-white/35 text-sm mt-1">Here's your career progress overview</p>
-          </div>
-          <Link to="/student/resume">
-            <motion.div whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.97 }}
-              className="hidden sm:flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 text-white text-sm font-semibold shadow-lg shadow-indigo-500/25 border border-indigo-400/20">
-              <Sparkles size={14} /> AI Tools
-            </motion.div>
-          </Link>
-        </div>
-      </motion.div>
+    <>
+      {header}
 
-      {/* Stats grid */}
-      {loading ? (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {[...Array(4)].map((_, i) => <CardSkeleton key={i} />)}
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard label="Skills Added" value={stats.skills} icon={Code2} color="indigo" change={stats.skills > 0 ? `${stats.skills} active` : undefined} />
-          <StatCard label="Projects" value={stats.projects} icon={FolderGit2} color="cyan" />
-          <StatCard label="Applications" value={stats.applications} icon={Briefcase} color="green" />
-          <StatCard label="Resume AI" value="Ready" icon={FileText} color="purple" />
-        </div>
-      )}
-
-      {/* Charts + quick actions */}
-      <div className="grid lg:grid-cols-3 gap-5">
-        {/* Activity */}
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}
-          className="glass rounded-2xl p-5 border border-white/7 lg:col-span-2 card-shine">
-          <div className="flex items-center justify-between mb-5">
-            <div>
-              <div className="font-semibold text-white text-sm">Profile Activity</div>
-              <div className="text-xs text-white/35 mt-0.5">Profile views this week</div>
-            </div>
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-400 bg-emerald-400/10 border border-emerald-400/20 px-2.5 py-1 rounded-full">
-              <TrendingUp size={11} /> +24%
-            </div>
-          </div>
-          <ResponsiveContainer width="100%" height={130}>
-            <AreaChart data={activityData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-              <defs>
-                <linearGradient id="actGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#6366f1" stopOpacity={0.35} />
-                  <stop offset="100%" stopColor="#6366f1" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
-              <XAxis dataKey="day" tick={{ fill: 'rgba(255,255,255,0.28)', fontSize: 10 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: 'rgba(255,255,255,0.28)', fontSize: 10 }} axisLine={false} tickLine={false} />
-              <Tooltip content={<CustomTooltip />} />
-              <Area type="monotone" dataKey="views" stroke="#818cf8" strokeWidth={2.5} fill="url(#actGrad)" dot={false} activeDot={{ r: 4, fill: '#818cf8', strokeWidth: 0 }} />
-            </AreaChart>
-          </ResponsiveContainer>
-        </motion.div>
-
-        {/* Quick actions */}
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
-          className="glass rounded-2xl p-5 border border-white/7">
-          <div className="font-semibold text-white text-sm mb-4">Quick Actions</div>
-          <div className="grid grid-cols-2 gap-2.5">
-            {[
-              { to: '/student/skills',   icon: Code2,       label: 'Add Skill',    grad: 'from-indigo-500/15', border: 'border-indigo-500/20', iconC: 'text-indigo-400' },
-              { to: '/student/projects', icon: FolderGit2,  label: 'Add Project',  grad: 'from-cyan-500/15',   border: 'border-cyan-500/20',   iconC: 'text-cyan-400' },
-              { to: '/student/jobs',     icon: Briefcase,   label: 'Browse Jobs',  grad: 'from-emerald-500/15',border: 'border-emerald-500/20',iconC: 'text-emerald-400' },
-              { to: '/student/resume',   icon: FileText,    label: 'Resume AI',    grad: 'from-violet-500/15', border: 'border-violet-500/20', iconC: 'text-violet-400' },
-            ].map(({ to, icon: Icon, label, grad, border, iconC }) => (
-              <Link key={to} to={to}>
-                <motion.div whileHover={{ scale: 1.04, y: -2 }} whileTap={{ scale: 0.97 }}
-                  className={`flex flex-col gap-2.5 p-3.5 rounded-xl border ${border} bg-gradient-to-br ${grad} to-transparent cursor-pointer transition-all`}>
-                  <Icon size={18} className={iconC} />
-                  <span className="text-xs font-semibold text-white/70 leading-tight">{label}</span>
-                </motion.div>
-              </Link>
-            ))}
-          </div>
-        </motion.div>
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <StatCard label="Skills" value={skills.length} icon={Code2} />
+        <StatCard label="Projects" value={projects.length} icon={FolderGit2} />
+        <StatCard label="Applications" value={applications.length} icon={ClipboardList} />
+        <StatCard label="Open jobs" value={jobs.length} icon={Briefcase} />
       </div>
 
-      {/* Recent jobs */}
-      {jobs.length > 0 && (
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <div className="font-semibold text-white">Latest Opportunities</div>
-              <div className="text-xs text-white/35 mt-0.5">Jobs posted recently</div>
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <Card className="lg:col-span-2">
+          <CardHeader
+            title="Recent applications"
+            action={
+              applications.length > 0 && (
+                <Link to="/student/applications" className="inline-flex items-center gap-1 text-sm font-medium text-brand-fg hover:underline">
+                  View all <ArrowRight size={14} aria-hidden="true" />
+                </Link>
+              )
+            }
+          />
+          {recent.length === 0 ? (
+            <EmptyState
+              bordered={false}
+              icon={ClipboardList}
+              title="No applications yet"
+              description="When you apply to a job, it will show up here with its current status."
+              action={<Link to="/student/jobs" className={buttonStyles({ size: 'sm' })}>Find jobs</Link>}
+            />
+          ) : (
+            <ul className="divide-y divide-line">
+              {recent.map((app) => (
+                <li key={app._id} className="flex items-center justify-between gap-4 px-5 py-3.5">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-fg">{app.job?.title || 'Job removed'}</p>
+                    <p className="truncate text-sm text-fg-muted">
+                      {app.job?.company || '—'} · Applied {formatDate(app.createdAt)}
+                    </p>
+                  </div>
+                  <StatusBadge status={app.status} />
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+
+        <Card>
+          <CardHeader title="Profile checklist" description={`${doneCount} of ${checklist.length} complete`} />
+          <CardBody>
+            <div
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={percent}
+              aria-label="Profile completion"
+              className="h-2 overflow-hidden rounded-full bg-subtle"
+            >
+              <div className="h-full rounded-full bg-brand transition-[width] duration-500" style={{ width: `${percent}%` }} />
             </div>
-            <Link to="/student/jobs" className="flex items-center gap-1 text-xs font-medium text-indigo-400 hover:text-indigo-300 transition-colors">
-              View all <ArrowRight size={12} />
-            </Link>
-          </div>
-          <div className="grid sm:grid-cols-2 gap-3">
-            {jobs.map((job, i) => (
-              <motion.div key={job._id} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: 0.3 + i * 0.07 }}
-                className="glass rounded-xl p-4 border border-white/7 hover-card card-shine group flex items-center gap-3.5">
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500/15 to-violet-500/10 border border-indigo-500/20 flex items-center justify-center shrink-0">
-                  <Briefcase size={15} className="text-indigo-400" />
+            <ul className="mt-4 space-y-1">
+              {checklist.map((item) => (
+                <li key={item.label}>
+                  <Link
+                    to={item.to}
+                    className="-mx-2 flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-subtle"
+                  >
+                    {item.done ? (
+                      <CircleCheck size={16} aria-hidden="true" className="shrink-0 text-success-fg" />
+                    ) : (
+                      <Circle size={16} aria-hidden="true" className="shrink-0 text-fg-subtle" />
+                    )}
+                    <span className={cn(item.done ? 'text-fg-subtle line-through' : 'text-fg')}>{item.label}</span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </CardBody>
+        </Card>
+      </div>
+
+      {latestJobs.length > 0 && (
+        <Card className="mt-6">
+          <CardHeader
+            title="Latest jobs"
+            action={
+              <Link to="/student/jobs" className="inline-flex items-center gap-1 text-sm font-medium text-brand-fg hover:underline">
+                See all <ArrowRight size={14} aria-hidden="true" />
+              </Link>
+            }
+          />
+          <ul className="divide-y divide-line">
+            {latestJobs.map((job) => (
+              <li key={job._id} className="flex items-center justify-between gap-4 px-5 py-3.5">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-fg">{job.title}</p>
+                  <p className="truncate text-sm text-fg-muted">{job.company} · {job.location}</p>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-semibold text-white group-hover:text-indigo-300 transition-colors truncate">{job.title}</div>
-                  <div className="text-xs text-white/35 truncate">{job.company} · {job.location}</div>
-                </div>
-                <div className="shrink-0 flex items-center gap-1 text-[10px] text-white/25">
-                  <Clock size={10} />
-                  {job.createdAt ? new Date(job.createdAt).toLocaleDateString('en', { month: 'short', day: 'numeric' }) : 'New'}
-                </div>
-              </motion.div>
+                <span className="shrink-0 text-xs text-fg-subtle">{formatDate(job.createdAt)}</span>
+              </li>
             ))}
-          </div>
-        </motion.div>
+          </ul>
+        </Card>
       )}
-    </div>
+    </>
   );
 };

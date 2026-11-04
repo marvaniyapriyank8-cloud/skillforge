@@ -1,37 +1,36 @@
-import { motion } from 'framer-motion';
+import { cn } from '../../utils/cn';
 
-export const Card = ({ children, className = '', hover = false, shine = false, ...props }) => (
-  <div className={`glass rounded-2xl ${hover ? 'hover-card cursor-pointer' : ''} ${shine ? 'card-shine' : ''} ${className}`} {...props}>
+export const Card = ({ children, className, ...props }) => (
+  <div className={cn('rounded-xl border border-line bg-surface shadow-card', className)} {...props}>
     {children}
   </div>
 );
 
-export const StatCard = ({ label, value, icon: Icon, color = 'indigo', change, subtitle }) => {
-  const colors = {
-    indigo: { grad: 'from-indigo-500/15 to-violet-500/5', border: 'border-indigo-500/20', icon: 'text-indigo-400', bg: 'bg-indigo-500/10', ring: 'shadow-indigo-500/10' },
-    cyan:   { grad: 'from-cyan-500/15 to-sky-500/5',    border: 'border-cyan-500/20',    icon: 'text-cyan-400',   bg: 'bg-cyan-500/10',   ring: 'shadow-cyan-500/10' },
-    green:  { grad: 'from-emerald-500/15 to-green-500/5',border: 'border-emerald-500/20',icon: 'text-emerald-400',bg: 'bg-emerald-500/10',ring: 'shadow-emerald-500/10' },
-    pink:   { grad: 'from-pink-500/15 to-rose-500/5',   border: 'border-pink-500/20',   icon: 'text-pink-400',   bg: 'bg-pink-500/10',   ring: 'shadow-pink-500/10' },
-    yellow: { grad: 'from-amber-500/15 to-yellow-500/5',border: 'border-amber-500/20',  icon: 'text-amber-400',  bg: 'bg-amber-500/10',  ring: 'shadow-amber-500/10' },
-    purple: { grad: 'from-violet-500/15 to-purple-500/5',border: 'border-violet-500/20',icon: 'text-violet-400', bg: 'bg-violet-500/10', ring: 'shadow-violet-500/10' },
-  };
-  const c = colors[color] || colors.indigo;
-  return (
-    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
-      className={`glass rounded-2xl p-5 border ${c.border} hover-card card-shine bg-gradient-to-br ${c.grad} shadow-xl ${c.ring}`}>
-      <div className="flex items-start justify-between mb-4">
-        <div className={`w-11 h-11 rounded-xl ${c.bg} border ${c.border} flex items-center justify-center`}>
-          {Icon && <Icon size={20} className={c.icon} />}
-        </div>
-        {change && (
-          <span className="text-xs font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
-            {change}
-          </span>
-        )}
-      </div>
-      <div className="text-2xl font-bold text-white mb-0.5 count-anim">{value}</div>
-      <div className="text-xs font-medium text-white/40">{label}</div>
-      {subtitle && <div className="text-xs text-white/25 mt-1">{subtitle}</div>}
-    </motion.div>
-  );
-};
+export const CardHeader = ({ title, description, action, className }) => (
+  <div className={cn('flex items-start justify-between gap-3 border-b border-line px-5 py-4', className)}>
+    <div className="min-w-0">
+      <h2 className="text-sm font-semibold text-fg">{title}</h2>
+      {description && <p className="mt-0.5 text-sm text-fg-muted">{description}</p>}
+    </div>
+    {action}
+  </div>
+);
+
+export const CardBody = ({ children, className }) => (
+  <div className={cn('p-5', className)}>{children}</div>
+);
+
+export const StatCard = ({ label, value, icon: Icon, hint }) => (
+  <Card className="p-5">
+    <div className="flex items-center justify-between gap-3">
+      <p className="text-sm text-fg-muted">{label}</p>
+      {Icon && (
+        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-soft text-brand-fg">
+          <Icon size={16} aria-hidden="true" />
+        </span>
+      )}
+    </div>
+    <p className="mt-3 text-2xl font-semibold tabular-nums tracking-tight text-fg">{value}</p>
+    {hint && <p className="mt-1 text-xs text-fg-subtle">{hint}</p>}
+  </Card>
+);

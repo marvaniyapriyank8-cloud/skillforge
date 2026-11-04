@@ -1,14 +1,13 @@
 import express from "express";
 import {
   createJob, getJobs, getJobById,
-  updateJob, deleteJob, applyJob
+  updateJob, deleteJob
 } from "../controllers/job.controller.js";
 import { isAuthenticated, authorizeRoles } from "../middleware/auth.middleware.js";
 
 const router = express.Router();
 
 // IMPORTANT: /apply/:id must come BEFORE /:id to avoid route conflict
-router.post("/apply/:id", isAuthenticated, authorizeRoles("student"), applyJob);
 
 router.post("/", isAuthenticated, authorizeRoles("recruiter"), createJob);
 router.get("/", isAuthenticated, getJobs);

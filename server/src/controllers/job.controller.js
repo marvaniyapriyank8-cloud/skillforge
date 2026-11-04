@@ -101,25 +101,3 @@ export const deleteJob = async (req, res) => {
   }
 };
 
-export const applyJob = async (req, res) => {
-  try {
-    const job = await Job.findById(req.params.id);
-
-    if (!job) {
-      return res.status(404).json({ success: false, message: "Job not found" });
-    }
-
-    // FIX: Check if already applied
-    if (job.applicants.includes(req.user._id)) {
-      return res.status(400).json({ success: false, message: "You have already applied to this job" });
-    }
-
-    job.applicants.push(req.user._id);
-    await job.save();
-
-    res.status(200).json({ success: true, message: "Applied successfully" });
-
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};

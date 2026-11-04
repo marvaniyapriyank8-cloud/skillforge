@@ -18,7 +18,7 @@ export const getAllUsers = async (req, res) => {
       };
     }
 
-    const users = await User.find(query).select("-password").sort({ createdAt: -1 });
+    const users = await User.find(query).select("-password").populate("assignedMentor", "fullName email").sort({ createdAt: -1 });
 
     res.status(200).json({ success: true, users });
 
@@ -122,5 +122,37 @@ export const getAnalytics = async (req, res) => {
 
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const assignMentor = async (req, res) => {
+  try {
+    const { mentorId } = req.body;
+    const student = await User.findById(req.params.id);
+    if (!student || student.role !== "student") {
+      return res.status(404).json({ success: false, message: "Student not found" });
+    }
+
+    if (mentorId === null || mentorId === "") {
+      student.assignedMentor = null;
+      await student.save();
+      return res.status(200).json({ success: true, message: "Mentor assignment removed", student });
+    }
+
+    if (!mentorId) {
+      return res.status(400).json({ success: false, message: "mentorId is required (or null to unassign)" });
+    }
+
+    const mentor = await User.findById(mentorId);
+    if (!mentor || mentor.role !== "mentor") {
+      return res.status(404).json({ success: false, message: "Mentor not found" });
+    }
+
+    student.assignedMentor = mentor._id;
+    await student.save();
+    const updated = await User.findById(student._id).select("-password").populate("assignedMentor", "fullName email");
+    return res.status(200).json({ success: true, message: "Mentor assigned successfully", student: updated });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
   }
 };

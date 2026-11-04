@@ -15,6 +15,7 @@ import jobRoutes from "./routes/job.routes.js";
 import applicationRoutes from "./routes/application.routes.js";
 import feedbackRoutes from "./routes/feedback.routes.js";
 import adminRoutes from "./routes/admin.routes.js";
+import mentorRoutes from "./routes/mentor.routes.js";
 
 const app = express();
 
@@ -70,6 +71,7 @@ app.use("/api/jobs", jobRoutes);
 app.use("/api/applications", applicationRoutes);
 app.use("/api/feedback", feedbackRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/mentor", mentorRoutes);
 
 // Health check
 app.get("/", (req, res) => res.json({ success: true, message: "SkillForge API v1.0" }));

@@ -8,6 +8,8 @@ import {
 } from "../services/ai.service.js";
 import Skill from "../models/skill.model.js";
 import Project from "../models/project.model.js";
+import Profile from "../models/profile.model.js";
+
 
 // pdf-parse is a CommonJS module, must use createRequire in ESM
 
@@ -69,23 +71,71 @@ export const analyzeSkillGap = async (req, res) => {
   try {
     const { targetRole } = req.body;
 
-    if (!targetRole || !targetRole.trim()) {
-      return res.status(400).json({ success: false, message: "targetRole is required in request body" });
+    if (!targetRole || typeof targetRole !== "string" || !targetRole.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "targetRole is required in request body"
+      });
     }
 
-    const skills = await Skill.find({ user: req.user._id });
-    const currentSkills = skills.map(s => s.name);
+    // Fetch complete student information
+    const [skills, projects, profile] = await Promise.all([
+      Skill.find({ user: req.user._id })
+        .select("name level")
+        .lean(),
+
+      Project.find({ user: req.user._id })
+        .select("title description techStack")
+        .lean(),
+
+      Profile.findOne({ user: req.user._id })
+        .select("bio college experience")
+        .lean()
+    ]);
+
+    // Keep existing skill names for backward compatibility
+    const currentSkills = skills.map(skill => skill.name);
+
+    // Additional context for more accurate AI analysis
+    const studentContext = {
+      skills: skills.map(skill => ({
+        name: skill.name,
+        level: skill.level
+      })),
+
+      projects: projects.map(project => ({
+        title: project.title,
+        description: project.description,
+        techStack: project.techStack
+      })),
+
+      profile: profile
+        ? {
+            bio: profile.bio,
+            college: profile.college,
+            experience: profile.experience
+          }
+        : null
+    };
 
     const analysis = await analyzeSkillGapWithAI(
-      currentSkills.length > 0 ? currentSkills : ["No skills added yet"],
-      targetRole
+      currentSkills,
+      targetRole.trim(),
+      studentContext
     );
 
-    res.status(200).json({ success: true, analysis });
+    res.status(200).json({
+      success: true,
+      analysis
+    });
 
   } catch (error) {
     console.error("Skill gap error:", error.message);
-    res.status(500).json({ success: false, message: error.message });
+
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
   }
 };
 

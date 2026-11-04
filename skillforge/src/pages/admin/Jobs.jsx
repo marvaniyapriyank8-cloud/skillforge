@@ -1,83 +1,80 @@
-import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { Briefcase, Trash2, MapPin, Users, Calendar } from 'lucide-react';
+import { useState } from 'react';
+import { Briefcase } from 'lucide-react';
+import { useFetch } from '../../hooks/useFetch';
+import { usePagination } from '../../hooks/usePagination';
 import { adminApi } from '../../api/adminApi';
+import { PageHeader } from '../../components/ui/PageHeader';
 import { SearchBar } from '../../components/ui/SearchBar';
+import { Pagination } from '../../components/ui/Pagination';
 import { EmptyState } from '../../components/ui/EmptyState';
-import { Button } from '../../components/ui/Button';
+import { ErrorState } from '../../components/ui/ErrorState';
 import { TableSkeleton } from '../../components/ui/Skeleton';
-import toast from 'react-hot-toast';
+import { Table, TableCard, Td, Th, Tr } from '../../components/ui/Table';
+import { formatDate, matchesQuery, plural } from '../../utils/format';
+
+const PAGE_SIZE = 10;
 
 export const AdminJobs = () => {
-  const [jobs, setJobs] = useState([]);
-  const [all, setAll] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const { data, loading, error, reload } = useFetch(() => adminApi.getAllJobs().then((res) => res.data.jobs ?? []));
   const [search, setSearch] = useState('');
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      const { data } = await adminApi.getAllJobs();
-      setAll(data.jobs || []); setJobs(data.jobs || []);
-    } catch { toast.error('Failed to load jobs'); }
-    setLoading(false);
-  };
-  useEffect(() => { load(); }, []);
+  const all = data ?? [];
+  const filtered = all.filter((j) => matchesQuery(search, j.title, j.company, j.location, j.recruiter?.fullName));
+  const pager = usePagination(filtered, PAGE_SIZE, search);
 
-  useEffect(() => {
-    if (!search) { setJobs(all); return; }
-    setJobs(all.filter(j =>
-      j.title?.toLowerCase().includes(search.toLowerCase()) ||
-      j.company?.toLowerCase().includes(search.toLowerCase())
-    ));
-  }, [search, all]);
+  let body;
+  if (loading) {
+    body = <TableSkeleton />;
+  } else if (error) {
+    body = <ErrorState title="Couldn't load jobs" onRetry={reload} />;
+  } else if (all.length === 0) {
+    body = <EmptyState icon={Briefcase} title="No jobs posted yet" description="Jobs posted by recruiters will be listed here." />;
+  } else {
+    body = (
+      <>
+        <SearchBar value={search} onChange={setSearch} placeholder="Search by title, company, location or recruiter…" className="mb-4 sm:max-w-md" />
+        {filtered.length === 0 ? (
+          <EmptyState icon={Briefcase} title="No matching jobs" description="Try a different search term." />
+        ) : (
+          <>
+            <TableCard>
+              <Table minWidth={760}>
+                <thead>
+                  <tr>
+                    <Th>Job</Th>
+                    <Th>Posted by</Th>
+                    <Th>Location</Th>
+                    <Th>Applicants</Th>
+                    <Th>Posted</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pager.pageItems.map((job) => (
+                    <Tr key={job._id}>
+                      <Td>
+                        <p className="font-medium text-fg">{job.title}</p>
+                        <p className="text-fg-muted">{job.company}</p>
+                      </Td>
+                      <Td>{job.recruiter?.fullName || '—'}</Td>
+                      <Td>{job.location}</Td>
+                      <Td className="tabular-nums">{job.applicants?.length ?? 0}</Td>
+                      <Td className="whitespace-nowrap">{formatDate(job.createdAt)}</Td>
+                    </Tr>
+                  ))}
+                </tbody>
+              </Table>
+            </TableCard>
+            <Pagination page={pager.page} totalPages={pager.totalPages} onPageChange={pager.setPage} total={pager.total} pageSize={pager.pageSize} />
+          </>
+        )}
+      </>
+    );
+  }
 
   return (
-    <div className="space-y-6">
-      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
-        <h1 className="text-2xl font-bold text-white">All Jobs</h1>
-        <p className="text-white/40 text-sm mt-1">{all.length} total job postings on the platform</p>
-      </motion.div>
-      <div className="grid grid-cols-3 gap-3">
-        {[['Total Jobs', all.length, 'text-white'], ['Active', all.length, 'text-emerald-400'],
-          ['Total Apps', all.reduce((s, j) => s + (j.applicants?.length || 0), 0), 'text-indigo-400']].map(([l, v, c]) => (
-          <div key={l} className="glass rounded-xl p-4 border border-white/6 text-center">
-            <div className={`text-2xl font-bold ${c}`}>{v}</div>
-            <div className="text-xs text-white/35 mt-1">{l}</div>
-          </div>
-        ))}
-      </div>
-      <SearchBar value={search} onChange={setSearch} placeholder="Search by title or company..." />
-      {loading ? <TableSkeleton /> : jobs.length === 0 ? (
-        <EmptyState icon={Briefcase} title="No jobs found" description="No jobs match your search." />
-      ) : (
-        <div className="glass rounded-2xl border border-white/6 overflow-hidden">
-          <table className="premium-table">
-            <thead><tr><th>Job</th><th>Recruiter</th><th>Location</th><th>Applicants</th><th>Posted</th></tr></thead>
-            <tbody>
-              {jobs.map((job, i) => (
-                <motion.tr key={job._id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.03 }}>
-                  <td>
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center shrink-0">
-                        <Briefcase size={14} className="text-indigo-400" />
-                      </div>
-                      <div>
-                        <div className="font-medium text-white text-sm">{job.title}</div>
-                        <div className="text-xs text-white/35">{job.company}</div>
-                      </div>
-                    </div>
-                  </td>
-                  <td><span className="text-sm text-white/55">{job.recruiter?.fullName || '—'}</span></td>
-                  <td><span className="flex items-center gap-1 text-sm text-white/50"><MapPin size={11} />{job.location}</span></td>
-                  <td><span className="flex items-center gap-1 text-sm text-white/50"><Users size={11} />{job.applicants?.length || 0}</span></td>
-                  <td><span className="text-sm text-white/40">{job.createdAt ? new Date(job.createdAt).toLocaleDateString() : '—'}</span></td>
-                </motion.tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
+    <>
+      <PageHeader title="Jobs" description={data ? `${plural(all.length, 'job')} posted on the platform.` : 'All job postings.'} />
+      {body}
+    </>
   );
 };
